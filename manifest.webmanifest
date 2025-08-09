@@ -1,0 +1,20 @@
+{
+  "name": "Topic News Aggregator",
+  "short_name": "NewsAggregator",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "description": "Aggregates news by topic with multi-source support and Hebrew support.",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
