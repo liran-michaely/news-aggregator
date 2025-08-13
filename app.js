@@ -1,1 +1,0 @@
-// Placeholder for main JS logic
