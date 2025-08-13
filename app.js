@@ -102,7 +102,7 @@ async function fetchRSS(url){
         title, url: link, originalUrl: link, source,
         publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
         description: (description||"").replace(/<[^>]+>/g,""),
-        image: "https://picsum.photos/seed/"+encodeURIComponent(title||source)+"/900/600",
+        image: null, // No placeholder image, will fetch from content
         needsImageFetch: true, score: 0
       };
     });
@@ -178,12 +178,17 @@ function App(){
       }
       
       const filtered = merged.filter(item=>{
-        let hay = ((item.title||'')+' '+(item.description||'')).toLowerCase()
-                   .replace(/&nbsp;|nbsp;|nbsp/gi,' ').replace(/\u00a0/g,' ');
-        return variants.length ? variants.some(v=>hay.includes(v)) : true;
+        if (!q || q.trim() === '') return true; // Show all if no search query
+        
+        const title = (item.title || '').toLowerCase();
+        const description = (item.description || '').toLowerCase();
+        const searchQuery = q.toLowerCase().trim();
+        
+        // Check for exact phrase in title or description
+        return title.includes(searchQuery) || description.includes(searchQuery);
       });
       let finalFiltered = filtered;
-      if (finalFiltered.length === 0){
+      if (finalFiltered.length === 0 && (!q || q.trim() === '')){
         finalFiltered = merged.slice(0, 120);
       }
 
@@ -240,14 +245,12 @@ function App(){
           style: { textDecoration: 'none', color: 'inherit' }
         },
           React.createElement('article', null,
-            React.createElement('img', {
+            // Only show image if one exists from content
+            a.image ? React.createElement('img', {
               src: a.image, 
               alt: '',
-              onError: (e) => {
-                e.target.src = `https://via.placeholder.com/900x600/e5e7eb/6b7280?text=${encodeURIComponent(a.source)}`;
-              },
-              style: { objectFit: 'cover' }
-            }),
+              style: { objectFit: 'cover', width: '100%', height: '180px' }
+            }) : null,
             React.createElement('div', {className:'pad'},
               React.createElement('div', {className:'meta'},
                 React.createElement('span', {className:'src'}, a.source),
