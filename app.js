@@ -50,72 +50,38 @@ function normalizeAndSort(arr, qForRelevance){
   });
 }
 async function proxyFetch(url){
-  // Simplified, more reliable proxy approach
+  // Use a more reliable proxy service that works better with GitHub Pages
   const proxies = [
     {
-      name: 'AllOrigins',
-      url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-      parseResponse: async (response) => {
-        const json = await response.json();
-        if (!json.contents) throw new Error('No content returned');
-        return json.contents;
-      }
-    },
-    {
-      name: 'CorsProxy',
-      url: `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      name: 'ThingProxy',
+      url: `https://thingproxy.freeboard.io/fetch/${url}`,
       parseResponse: async (response) => response.text()
     },
     {
-      name: 'RSS2JSON',
-      url: `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}&api_key=YOUR_API_KEY&count=20`,
-      parseResponse: async (response) => {
-        const json = await response.json();
-        if (json.status !== 'ok') throw new Error(`RSS2JSON error: ${json.message || 'Unknown error'}`);
-        
-        // Convert RSS2JSON format back to RSS XML
-        let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-<channel>
-<title><![CDATA[${json.feed?.title || 'News Feed'}]]></title>
-<description><![CDATA[${json.feed?.description || ''}]]></description>
-<link>${json.feed?.url || ''}</link>`;
-        
-        if (json.items && Array.isArray(json.items)) {
-          for (const item of json.items) {
-            rssXml += `
-<item>
-<title><![CDATA[${item.title || 'No Title'}]]></title>
-<description><![CDATA[${item.description || item.content || ''}]]></description>
-<link>${item.link || item.guid || ''}</link>
-<pubDate>${item.pubDate || new Date().toISOString()}</pubDate>
-</item>`;
-          }
-        }
-        
-        rssXml += `
-</channel>
-</rss>`;
-        return rssXml;
-      }
+      name: 'JSONProxy',
+      url: `https://jsonp.afeld.me/?url=${encodeURIComponent(url)}`,
+      parseResponse: async (response) => response.text()
+    },
+    {
+      name: 'AllOrigins-Raw',
+      url: `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      parseResponse: async (response) => response.text()
     }
   ];
 
-  let lastError;
-  
   for (const proxy of proxies) {
     try {
-      console.log(`Trying ${proxy.name} proxy for ${url}`);
+      console.log(`🔄 Trying ${proxy.name} for ${url}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
       
       const response = await fetch(proxy.url, {
         method: 'GET',
         signal: controller.signal,
         headers: {
-          'Accept': 'application/json, application/rss+xml, application/xml, text/xml, */*',
-          'User-Agent': 'Mozilla/5.0 (compatible; NewsAggregator/1.0)'
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+          'User-Agent': 'Mozilla/5.0 (compatible; NewsReader/1.0)'
         }
       });
       
@@ -127,77 +93,85 @@ async function proxyFetch(url){
       
       const text = await proxy.parseResponse(response);
       
-      // Basic validation that we got valid content
-      if (text && text.length > 100 && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
-        console.log(`✓ Successfully fetched ${url} via ${proxy.name}`);
+      // Validate we got RSS content
+      if (text && text.length > 200 && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
+        console.log(`✅ Successfully fetched via ${proxy.name}`);
         return text;
       } else {
-        throw new Error(`Invalid or empty response from ${proxy.name}`);
+        throw new Error(`Invalid RSS content from ${proxy.name}`);
       }
       
     } catch (error) {
-      lastError = error;
-      console.log(`✗ ${proxy.name} failed for ${url}: ${error.message}`);
+      console.log(`❌ ${proxy.name} failed: ${error.message}`);
       continue;
     }
   }
   
-  console.error(`All proxies failed for ${url}:`, lastError?.message);
-  throw lastError || new Error('All proxies failed');
+  throw new Error('All proxy services failed');
 }
 async function fetchRSS(url){
   try {
     const xmlText = await proxyFetch(url);
     
-    // Clean up the XML text to handle encoding issues
+    // Clean up the XML text to handle encoding and entity issues
     const cleanXml = xmlText
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove invalid XML characters
+      .replace(/&(?!(?:amp|lt|gt|quot|apos);)/g, '&amp;') // Fix unescaped ampersands
       .replace(/^\s*<\?xml[^>]*\?>\s*/, '') // Remove XML declaration if present
       .trim();
     
     // Try to parse as XML
-    const xml = new DOMParser().parseFromString(cleanXml, "application/xml");
+    const xml = new DOMParser().parseFromString(`<?xml version="1.0" encoding="UTF-8"?>${cleanXml}`, "application/xml");
     const parseError = xml.querySelector('parsererror');
     
     if (parseError) {
-      console.error(`XML parse error for ${url}:`, parseError.textContent);
+      console.warn(`XML parse error for ${url}, trying as HTML...`);
       // Try parsing as HTML in case it's not proper XML
       const htmlDoc = new DOMParser().parseFromString(cleanXml, "text/html");
       const items = Array.from(htmlDoc.querySelectorAll("item, entry"));
       if (items.length === 0) {
-        throw new Error("No items found in feed");
+        throw new Error("No RSS items found in feed");
       }
+      // Use htmlDoc instead of xml for parsing
+      return parseRSSItems(htmlDoc, url);
     }
-    const items = Array.from(xml.querySelectorAll("item, entry")).map((it,idx)=>{
-      const title = it.querySelector("title")?.textContent?.trim() || "";
-      let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
-      const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
-      const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
-      const source = (new URL(url)).hostname.replace(/^www\./,"");
-      try{
-        const base = new URL(url);
-        if (link) {
-          link = new URL(link, base).toString();
-          const u = new URL(link);
-          if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
-            link = u.searchParams.get("q") || u.searchParams.get("url");
-          }
-        }
-      }catch(_){ }
-      return {
-        id: source+"_"+idx+"_"+(link||title).slice(0,40),
-        title, url: link, originalUrl: link, source,
-        publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
-        description: (description||"").replace(/<[^>]+>/g,""),
-        image: null, // No placeholder image, will fetch from content
-        needsImageFetch: true, score: 0
-      };
-    });
-    return items;
+    
+    return parseRSSItems(xml, url);
   } catch (error) {
     console.error(`Failed to fetch RSS from ${url}:`, error.message);
     return [];
   }
+}
+
+function parseRSSItems(doc, url) {
+  const items = Array.from(doc.querySelectorAll("item, entry")).map((it,idx)=>{
+    const title = it.querySelector("title")?.textContent?.trim() || "";
+    let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
+    const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
+    const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
+    const source = (new URL(url)).hostname.replace(/^www\./,"");
+    
+    try{
+      const base = new URL(url);
+      if (link) {
+        link = new URL(link, base).toString();
+        const u = new URL(link);
+        if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
+          link = u.searchParams.get("q") || u.searchParams.get("url");
+        }
+      }
+    }catch(_){ }
+    
+    return {
+      id: source+"_"+idx+"_"+(link||title).slice(0,40),
+      title, url: link, originalUrl: link, source,
+      publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
+      description: (description||"").replace(/<[^>]+>/g,""),
+      image: null, // No placeholder image, will fetch from content
+      needsImageFetch: true, score: 0
+    };
+  });
+  return items;
 }
 async function getOriginalArticleData(targetUrl){
   if (!/^https?:\/\//.test(targetUrl)) return null;
