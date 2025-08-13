@@ -60,12 +60,19 @@ function normalizeAndSort(arr, qForRelevance){
 }
 async function proxyFetch(url){
   try {
-    // Use a public CORS proxy for GitHub Pages deployment
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-    const r = await fetch(proxyUrl);
+    // Use corsproxy.io which is more reliable for GitHub Pages
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+    const r = await fetch(proxyUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+      }
+    });
+    
     if (!r.ok) {
-      throw new Error(`CORS proxy fetch failed: ${r.status}`);
+      throw new Error(`CORS proxy fetch failed: ${r.status} ${r.statusText}`);
     }
+    
     return r.text();
   } catch (error) {
     console.error(`Failed to fetch ${url}:`, error.message);
@@ -163,9 +170,13 @@ function App(){
       setScan({attempted:endpoints.length, succeeded});
 
       if (succeeded === 0) {
-        setError("Unable to fetch news from any sources. Please try again later.");
+        setError("Unable to fetch news from any sources due to CORS restrictions. This is a temporary issue with external RSS feeds. Please try again later.");
         setLoading(false);
         return;
+      }
+
+      if (succeeded < endpoints.length / 2) {
+        setError(`Warning: Only ${succeeded} out of ${endpoints.length} news sources are working due to CORS issues. Results may be limited.`);
       }
 
       let merged=[]; const seen=new Set();
