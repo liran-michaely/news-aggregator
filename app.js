@@ -9,8 +9,14 @@ const IL_RSS = [
 ];
 
 const US_RSS = [
-  "https://feeds.bbci.co.uk/news/rss.xml",
+  "https://feeds.bbci.co.uk/news/world/rss.xml",
   "https://rss.cnn.com/rss/edition.rss"
+];
+
+// Fallback sources if main ones fail
+const FALLBACK_RSS = [
+  "https://feeds.reuters.com/reuters/topNews",
+  "https://feeds.washingtonpost.com/rss/world"
 ];
 
 function heVariants(q){
@@ -44,30 +50,47 @@ function normalizeAndSort(arr, qForRelevance){
   });
 }
 async function proxyFetch(url){
-  // List of CORS proxy services to try
+  // Simplified, more reliable proxy approach
   const proxies = [
     {
-      url: `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`,
+      name: 'AllOrigins',
+      url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
       parseResponse: async (response) => {
         const json = await response.json();
-        if (json.status !== 'ok') throw new Error('RSS2JSON failed');
+        if (!json.contents) throw new Error('No content returned');
+        return json.contents;
+      }
+    },
+    {
+      name: 'CorsProxy',
+      url: `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      parseResponse: async (response) => response.text()
+    },
+    {
+      name: 'RSS2JSON',
+      url: `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}&api_key=YOUR_API_KEY&count=20`,
+      parseResponse: async (response) => {
+        const json = await response.json();
+        if (json.status !== 'ok') throw new Error(`RSS2JSON error: ${json.message || 'Unknown error'}`);
         
         // Convert RSS2JSON format back to RSS XML
         let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
 <channel>
-<title>${json.feed.title || ''}</title>
-<description>${json.feed.description || ''}</description>
-<link>${json.feed.url || ''}</link>`;
+<title><![CDATA[${json.feed?.title || 'News Feed'}]]></title>
+<description><![CDATA[${json.feed?.description || ''}]]></description>
+<link>${json.feed?.url || ''}</link>`;
         
-        for (const item of json.items) {
-          rssXml += `
+        if (json.items && Array.isArray(json.items)) {
+          for (const item of json.items) {
+            rssXml += `
 <item>
-<title><![CDATA[${item.title || ''}]]></title>
-<description><![CDATA[${item.description || ''}]]></description>
-<link>${item.link || ''}</link>
-<pubDate>${item.pubDate || ''}</pubDate>
+<title><![CDATA[${item.title || 'No Title'}]]></title>
+<description><![CDATA[${item.description || item.content || ''}]]></description>
+<link>${item.link || item.guid || ''}</link>
+<pubDate>${item.pubDate || new Date().toISOString()}</pubDate>
 </item>`;
+          }
         }
         
         rssXml += `
@@ -75,17 +98,6 @@ async function proxyFetch(url){
 </rss>`;
         return rssXml;
       }
-    },
-    {
-      url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-      parseResponse: async (response) => {
-        const json = await response.json();
-        return json.contents;
-      }
-    },
-    {
-      url: `https://corsproxy.io/?${encodeURIComponent(url)}`,
-      parseResponse: async (response) => response.text()
     }
   ];
 
@@ -93,14 +105,21 @@ async function proxyFetch(url){
   
   for (const proxy of proxies) {
     try {
-      console.log(`Trying proxy for ${url}:`, proxy.url.split('?')[0]);
+      console.log(`Trying ${proxy.name} proxy for ${url}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
       const response = await fetch(proxy.url, {
         method: 'GET',
+        signal: controller.signal,
         headers: {
-          'Accept': 'application/json, application/rss+xml, application/xml, text/xml, */*'
+          'Accept': 'application/json, application/rss+xml, application/xml, text/xml, */*',
+          'User-Agent': 'Mozilla/5.0 (compatible; NewsAggregator/1.0)'
         }
       });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -108,21 +127,22 @@ async function proxyFetch(url){
       
       const text = await proxy.parseResponse(response);
       
-      // Basic validation that we got XML content
-      if (text && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
-        console.log(`Successfully fetched ${url} via proxy`);
+      // Basic validation that we got valid content
+      if (text && text.length > 100 && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
+        console.log(`✓ Successfully fetched ${url} via ${proxy.name}`);
         return text;
       } else {
-        throw new Error('Invalid RSS response');
+        throw new Error(`Invalid or empty response from ${proxy.name}`);
       }
       
     } catch (error) {
       lastError = error;
-      console.log(`Proxy failed for ${url}: ${error.message}`);
+      console.log(`✗ ${proxy.name} failed for ${url}: ${error.message}`);
       continue;
     }
   }
   
+  console.error(`All proxies failed for ${url}:`, lastError?.message);
   throw lastError || new Error('All proxies failed');
 }
 async function fetchRSS(url){
@@ -256,7 +276,19 @@ function App(){
       
       let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
       console.log(`RSS fetch results: ${succeeded} succeeded out of ${endpoints.length} total`);
-      setScan({attempted:endpoints.length, succeeded});
+      
+      // If most sources failed, try fallback sources
+      if (succeeded < 2 && FALLBACK_RSS.length > 0) {
+        console.log('Trying fallback RSS sources...');
+        const fallbackResults = await Promise.allSettled(
+          FALLBACK_RSS.map(url => fetchWithTimeout(url))
+        );
+        results.push(...fallbackResults);
+        succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
+        setScan({attempted:endpoints.length + FALLBACK_RSS.length, succeeded});
+      } else {
+        setScan({attempted:endpoints.length, succeeded});
+      }
 
       if (succeeded === 0) {
         setError("Unable to fetch news from any sources due to CORS restrictions. This is a temporary issue with external RSS feeds. Please try again later.");
