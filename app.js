@@ -34,7 +34,9 @@ function heVariants(q){
 }
 function timeAgo(iso){
   if(!iso) return "";
-  const t = Date.now() - new Date(iso).getTime();
+  const parsed = Date.parse(iso);
+  if (isNaN(parsed)) return "";
+  const t = Date.now() - parsed;
   const m = Math.max(0, Math.floor(t/60000));
   if (m < 1) return "just now";
   if (m < 60) return m+"m";
@@ -71,15 +73,19 @@ async function fetchRSS(url){
     const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
     const source = (new URL(url)).hostname.replace(/^www\./,"");
     try{
-      const u = new URL(link);
-      if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
-        link = u.searchParams.get("q") || u.searchParams.get("url");
+      const base = new URL(url);
+      if (link) {
+        link = new URL(link, base).toString();
+        const u = new URL(link);
+        if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
+          link = u.searchParams.get("q") || u.searchParams.get("url");
+        }
       }
-    }catch(_){}
+    }catch(_){ }
     return {
       id: source+"_"+idx+"_"+(link||title).slice(0,40),
       title, url: link, originalUrl: link, source,
-      publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
+      publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
       description: (description||"").replace(/<[^>]+>/g,""),
       image: "https://picsum.photos/seed/"+encodeURIComponent(title||source)+"/900/600",
       needsImageFetch: true, score: 0
@@ -193,17 +199,27 @@ function App(){
     ),
     articles.length===0 && !loading ? React.createElement('div', {className:'empty'}, 'Search for a topic to see results.') : null,
     React.createElement('div', {className:'grid'},
-      articles.map(a=> React.createElement('article', {key:a.id},
-        React.createElement('img', {src:a.image, alt:''}),
-        React.createElement('div', {className:'pad'},
-          React.createElement('div', {className:'meta'},
-            React.createElement('span', {className:'src'}, a.source),
-            React.createElement('span', null, timeAgo(a.publishedAt))
-          ),
-          React.createElement('h3', {style:{margin:'8px 0 6px',fontSize:18,color:'#111827'}}, a.enhancedTitle || a.title),
-          a.description ? React.createElement('p', {style:{margin:0,color:'#334155'}}, a.enhancedDescription || a.description) : null
+      articles.map(a=>
+        React.createElement('a', {
+          key: a.id,
+          href: a.url || '#',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          style: { textDecoration: 'none', color: 'inherit' }
+        },
+          React.createElement('article', null,
+            React.createElement('img', {src:a.image, alt:''}),
+            React.createElement('div', {className:'pad'},
+              React.createElement('div', {className:'meta'},
+                React.createElement('span', {className:'src'}, a.source),
+                React.createElement('span', null, timeAgo(a.publishedAt))
+              ),
+              React.createElement('h3', {style:{margin:'8px 0 6px',fontSize:18,color:'#111827'}}, a.enhancedTitle || a.title),
+              a.description ? React.createElement('p', {style:{margin:0,color:'#334155'}}, a.enhancedDescription || a.description) : null
+            )
+          )
         )
-      ))
+      )
     )
   );
 }
