@@ -56,52 +56,88 @@ function normalizeAndSort(arr, qForRelevance){
 }
 async function proxyFetch(url){
   // Use a more reliable proxy service that works better with GitHub Pages
-// Proxy services for CORS bypass - Updated with working services
+// Alternative working proxy services
 const PROXY_SERVICES = [
-  { name: "CorsAnywhere-Public", url: (u) => `https://cors-anywhere.herokuapp.com/${u}`, emoji: "🔄" },
-  { name: "AllOrigins", url: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, isJson: true, emoji: "🔄" },
-  { name: "CorsProxy", url: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`, emoji: "🔄" },
-  { name: "CorsProxy-Org", url: (u) => `https://corsproxy.org/?${encodeURIComponent(u)}`, emoji: "🔄" }
+  { 
+    name: "CORS-Proxy", 
+    url: (u) => `https://proxy.cors.sh/${u}`, 
+    headers: { 'x-cors-api-key': 'temp_public' },
+    emoji: "🌐" 
+  },
+  { 
+    name: "Proxy-CORS", 
+    url: (u) => `https://api.proxycors.com/?url=${encodeURIComponent(u)}`, 
+    emoji: "🔄" 
+  },
+  { 
+    name: "Heroku-Proxy", 
+    url: (u) => `https://safe-cors-anywhere.herokuapp.com/${u}`, 
+    emoji: "�" 
+  },
+  { 
+    name: "AllOrigins-Raw", 
+    url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, 
+    emoji: "�" 
+  }
 ];
 
-async function proxyFetch(url, timeout = 10000) {
-  console.log(`🔄 Fetching: ${url}`);
+async function proxyFetch(url, timeout = 12000) {
+  console.log(`� Starting fetch for: ${url}`);
   
+  // Try direct fetch first for feeds that might allow CORS
+  try {
+    console.log(`🎯 Attempting direct fetch...`);
+    const directResponse = await fetch(url, {
+      headers: {
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'User-Agent': 'NewsAggregator/1.0'
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+    
+    if (directResponse.ok) {
+      const text = await directResponse.text();
+      if (text && text.length > 50 && (text.includes('<rss') || text.includes('<feed') || text.includes('<item'))) {
+        console.log(`✅ Direct fetch succeeded: ${text.length} chars`);
+        return text;
+      }
+    }
+  } catch (e) {
+    console.log(`❌ Direct fetch failed: ${e.message}`);
+  }
+  
+  // Try proxy services
   for (const proxy of PROXY_SERVICES) {
     try {
       console.log(`${proxy.emoji} Trying ${proxy.name}...`);
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
-      const response = await fetch(proxy.url(url), {
-        signal: controller.signal,
+      const fetchOptions = {
+        signal: AbortSignal.timeout(timeout),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-          'Accept': 'application/rss+xml, application/xml, text/xml, text/plain, */*',
-          'X-Requested-With': 'XMLHttpRequest'
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          ...(proxy.headers || {})
         }
-      });
+      };
       
-      clearTimeout(timeoutId);
+      const response = await fetch(proxy.url(url), fetchOptions);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       
-      let text;
-      if (proxy.isJson) {
-        const jsonData = await response.json();
-        text = jsonData.contents || jsonData.data || '';
-      } else {
-        text = await response.text();
-      }
+      const text = await response.text();
       
-      if (!text || text.length < 100) {
+      // Validate RSS content
+      if (!text || text.length < 50) {
         throw new Error(`Content too short: ${text.length} chars`);
       }
       
-      console.log(`✅ ${proxy.name} succeeded - ${text.length} chars`);
+      if (!text.includes('<rss') && !text.includes('<feed') && !text.includes('<item') && !text.includes('<entry')) {
+        throw new Error('Content does not appear to be RSS/XML');
+      }
+      
+      console.log(`✅ ${proxy.name} succeeded: ${text.length} chars`);
       return text;
       
     } catch (error) {
@@ -110,7 +146,7 @@ async function proxyFetch(url, timeout = 10000) {
     }
   }
   
-  throw new Error('All proxy services failed');
+  throw new Error('❌ All proxy services failed - RSS feed may be temporarily unavailable');
 }  for (const proxy of proxies) {
     try {
       console.log(`🔄 Trying ${proxy.name} for ${url}`);
@@ -152,28 +188,10 @@ async function proxyFetch(url, timeout = 10000) {
   throw new Error('All proxy services failed');
 }
 async function fetchRSS(url){
+  console.log(`� Fetching RSS from: ${new URL(url).hostname}`);
+  
   try {
-    let xmlText;
-    
-    // First try direct fetch (some RSS feeds allow CORS)
-    try {
-      console.log(`🔄 Trying direct fetch for: ${url}`);
-      const directResponse = await fetch(url, {
-        headers: {
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-        }
-      });
-      
-      if (directResponse.ok) {
-        xmlText = await directResponse.text();
-        console.log(`✅ Direct fetch succeeded for: ${url}`);
-      } else {
-        throw new Error(`Direct fetch failed: ${directResponse.status}`);
-      }
-    } catch (directError) {
-      console.log(`❌ Direct fetch failed, trying proxy: ${directError.message}`);
-      xmlText = await proxyFetch(url);
-    }
+    const xmlText = await proxyFetch(url);
     
     // Clean up the XML text to handle encoding and entity issues
     const cleanXml = xmlText
@@ -187,20 +205,24 @@ async function fetchRSS(url){
     const parseError = xml.querySelector('parsererror');
     
     if (parseError) {
-      console.warn(`XML parse error for ${url}, trying as HTML...`);
+      console.warn(`⚠️ XML parse error for ${url}, trying as HTML...`);
       // Try parsing as HTML in case it's not proper XML
       const htmlDoc = new DOMParser().parseFromString(cleanXml, "text/html");
       const items = Array.from(htmlDoc.querySelectorAll("item, entry"));
       if (items.length === 0) {
         throw new Error("No RSS items found in feed");
       }
-      // Use htmlDoc instead of xml for parsing
-      return parseRSSItems(htmlDoc, url);
+      const results = parseRSSItems(htmlDoc, url);
+      console.log(`✅ Parsed ${results.length} items from ${new URL(url).hostname} (HTML fallback)`);
+      return results;
     }
     
-    return parseRSSItems(xml, url);
+    const results = parseRSSItems(xml, url);
+    console.log(`✅ Parsed ${results.length} items from ${new URL(url).hostname}`);
+    return results;
+    
   } catch (error) {
-    console.error(`Failed to fetch RSS from ${url}:`, error.message);
+    console.error(`❌ Failed to fetch RSS from ${new URL(url).hostname}:`, error.message);
     return [];
   }
 }
