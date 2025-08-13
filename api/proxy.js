@@ -11,13 +11,19 @@ export default async function handler(req, res) {
     res.status(400).json({ error: 'Missing url parameter' });
     return;
   }
+  let target;
   try {
-    const target = new URL(url);
-    const forbidden = ['localhost','127.0.0.1','0.0.0.0'];
-    if (forbidden.includes(target.hostname)) {
-      res.status(400).json({ error: 'Forbidden host' });
-      return;
-    }
+    target = new URL(url);
+  } catch (_) {
+    res.status(400).json({ error: 'Invalid url parameter' });
+    return;
+  }
+  const forbidden = ['localhost','127.0.0.1','0.0.0.0'];
+  if (forbidden.includes(target.hostname) || !['http:','https:'].includes(target.protocol)) {
+    res.status(400).json({ error: 'Forbidden host' });
+    return;
+  }
+  try {
     const r = await fetch(target.toString(), {
       headers: { 'user-agent': 'Mozilla/5.0 (compatible; NewsAggBot/1.0)' },
       redirect: 'follow'
