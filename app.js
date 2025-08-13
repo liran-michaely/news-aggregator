@@ -5,17 +5,12 @@ const { useEffect, useState } = React;
 const IL_RSS = [
   "https://www.ynet.co.il/Integration/StoryRss2.xml",
   "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1",
-  "https://rcs.mako.co.il/rss/news-israel.xml",
-  "https://www.calcalist.co.il/home/0,7340,L-8,00.html?service=rss",
-  "https://www.themarker.com/cmlink/1.147"
+  "https://rcs.mako.co.il/rss/news-israel.xml"
 ];
 
 const US_RSS = [
   "https://feeds.bbci.co.uk/news/rss.xml",
-  "https://rss.cnn.com/rss/edition.rss",
-  "https://feeds.abcnews.com/abcnews/topstories",
-  "https://feeds.nbcnews.com/nbcnews/public/news",
-  "https://feeds.foxnews.com/foxnews/latest"
+  "https://rss.cnn.com/rss/edition.rss"
 ];
 
 function heVariants(q){
@@ -52,6 +47,36 @@ async function proxyFetch(url){
   // List of CORS proxy services to try
   const proxies = [
     {
+      url: `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`,
+      parseResponse: async (response) => {
+        const json = await response.json();
+        if (json.status !== 'ok') throw new Error('RSS2JSON failed');
+        
+        // Convert RSS2JSON format back to RSS XML
+        let rssXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>${json.feed.title || ''}</title>
+<description>${json.feed.description || ''}</description>
+<link>${json.feed.url || ''}</link>`;
+        
+        for (const item of json.items) {
+          rssXml += `
+<item>
+<title><![CDATA[${item.title || ''}]]></title>
+<description><![CDATA[${item.description || ''}]]></description>
+<link>${item.link || ''}</link>
+<pubDate>${item.pubDate || ''}</pubDate>
+</item>`;
+        }
+        
+        rssXml += `
+</channel>
+</rss>`;
+        return rssXml;
+      }
+    },
+    {
       url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
       parseResponse: async (response) => {
         const json = await response.json();
@@ -61,10 +86,6 @@ async function proxyFetch(url){
     {
       url: `https://corsproxy.io/?${encodeURIComponent(url)}`,
       parseResponse: async (response) => response.text()
-    },
-    {
-      url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-      parseResponse: async (response) => response.text()
     }
   ];
 
@@ -72,10 +93,12 @@ async function proxyFetch(url){
   
   for (const proxy of proxies) {
     try {
+      console.log(`Trying proxy for ${url}:`, proxy.url.split('?')[0]);
+      
       const response = await fetch(proxy.url, {
         method: 'GET',
         headers: {
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+          'Accept': 'application/json, application/rss+xml, application/xml, text/xml, */*'
         }
       });
       
@@ -87,9 +110,10 @@ async function proxyFetch(url){
       
       // Basic validation that we got XML content
       if (text && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
+        console.log(`Successfully fetched ${url} via proxy`);
         return text;
       } else {
-        throw new Error('Invalid XML response');
+        throw new Error('Invalid RSS response');
       }
       
     } catch (error) {
@@ -240,8 +264,8 @@ function App(){
         return;
       }
 
-      // Only show warning if less than 70% of sources are working
-      if (succeeded < endpoints.length * 0.7) {
+      // Only show warning if less than 60% of sources are working (3 out of 5)
+      if (succeeded < endpoints.length * 0.6) {
         setError(`Warning: Only ${succeeded} out of ${endpoints.length} news sources are working due to CORS issues. Results may be limited.`);
       }
 
