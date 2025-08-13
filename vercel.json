@@ -6,6 +6,18 @@
       "use": "@vercel/static"
     },
     {
+      "src": "app.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "manifest.webmanifest",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "icons/*",
+      "use": "@vercel/static"
+    },
+    {
       "src": "api/proxy.js",
       "use": "@vercel/node"
     }
