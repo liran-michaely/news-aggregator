@@ -200,6 +200,7 @@ function App(){
     try {
       const variants = heVariants(q).map(s=>s.toLowerCase());
       const endpoints = [...IL_RSS, ...US_RSS];
+      console.log(`Total RSS sources configured: ${endpoints.length}`);
       setScan({attempted:endpoints.length, succeeded:0});
       
       // Fetch RSS feeds with timeout and limit concurrent requests
@@ -230,6 +231,7 @@ function App(){
       }
       
       let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
+      console.log(`RSS fetch results: ${succeeded} succeeded out of ${endpoints.length} total`);
       setScan({attempted:endpoints.length, succeeded});
 
       if (succeeded === 0) {
@@ -238,7 +240,8 @@ function App(){
         return;
       }
 
-      if (succeeded < endpoints.length / 2) {
+      // Only show warning if less than 70% of sources are working
+      if (succeeded < endpoints.length * 0.7) {
         setError(`Warning: Only ${succeeded} out of ${endpoints.length} news sources are working due to CORS issues. Results may be limited.`);
       }
 
