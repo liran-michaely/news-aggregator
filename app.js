@@ -1,29 +1,31 @@
 (function(){
 const { useEffect, useState } = React;
 
-// Direct RSS sources only (no Google News)
+// Direct RSS sources - Israel (Hebrew) and US (English) only
 const IL_RSS = [
+  "https://www.ynet.co.il/Integration/StoryRss2.xml",
   "https://rss.walla.co.il/rss/1",
   "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1",
   "https://rcs.mako.co.il/rss/news-israel.xml",
-  "https://www.jpost.com/Rss/RssFeedsHeadlines.aspx",
-  "https://www.timesofisrael.com/feed/",
-  "https://www.haaretz.com/cmlink/haaretz-com-all-headlines-rss-1.4605102",
   "https://www.calcalist.co.il/home/0,7340,L-8,00.html?service=rss",
   "https://www.themarker.com/cmlink/1.147",
-  "https://www.i24news.tv/en/rss.xml"
+  "https://www.kan.org.il/content/kan/rss/news.xml",
+  "https://13tv.co.il/feed/",
+  "https://www.news1.co.il/rss/main",
+  "https://www.makorrishon.co.il/rss/main"
 ];
 
-const INTL_RSS = [
+const US_RSS = [
   "https://www.reuters.com/rss/world",
-  "https://feeds.bbci.co.uk/news/world/rss.xml",
-  "https://www.aljazeera.com/xml/rss/all.xml",
   "https://apnews.com/hub/apf-topnews?utm_source=rss",
-  "https://www.theguardian.com/world/rss",
-  "https://www.dw.com/en/top-stories/s-9097?maca=en-rss-en-all-1573-xml-rss",
-  "https://www.france24.com/en/rss",
-  "https://rss.cnn.com/rss/edition_world.rss",
-  "https://www.npr.org/rss/rss.php?id=1004"
+  "https://rss.cnn.com/rss/edition.rss",
+  "https://www.npr.org/rss/rss.php?id=1001",
+  "https://feeds.washingtonpost.com/rss/world",
+  "https://www.cbsnews.com/latest/rss/main",
+  "https://feeds.abcnews.com/abcnews/topstories",
+  "https://feeds.nbcnews.com/nbcnews/public/news",
+  "https://www.usatoday.com/rss/news/",
+  "https://feeds.foxnews.com/foxnews/latest"
 ];
 
 function heVariants(q){
@@ -58,10 +60,11 @@ function normalizeAndSort(arr, qForRelevance){
 }
 async function proxyFetch(url){
   try {
-    const r = await fetch("/api/proxy?url=" + encodeURIComponent(url));
+    // Use a public CORS proxy for GitHub Pages deployment
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    const r = await fetch(proxyUrl);
     if (!r.ok) {
-      const errorData = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-      throw new Error(`Proxy fetch failed: ${errorData.error || r.status}`);
+      throw new Error(`CORS proxy fetch failed: ${r.status}`);
     }
     return r.text();
   } catch (error) {
@@ -153,7 +156,7 @@ function App(){
     
     try {
       const variants = heVariants(q).map(s=>s.toLowerCase());
-      const endpoints = [...IL_RSS, ...INTL_RSS];
+      const endpoints = [...IL_RSS, ...US_RSS];
       setScan({attempted:endpoints.length, succeeded:0});
       let results = await Promise.allSettled(endpoints.map(fetchRSS));
       let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
@@ -211,9 +214,9 @@ function App(){
       React.createElement('h1', {style:{margin:0}}, 'Topic News Aggregator'),
       React.createElement('div', null,
         React.createElement('span', {className:'pill'}, `Sources scanned: ${scan.succeeded}/${scan.attempted}`),
-        React.createElement('span', {className:'pill'}, 'IL: Direct RSS'),
-        React.createElement('span', {className:'pill'}, 'International: Direct RSS'),
-        React.createElement('span', {className:'pill'}, 'Direct links')
+        React.createElement('span', {className:'pill'}, 'Israel: Hebrew RSS'),
+        React.createElement('span', {className:'pill'}, 'US: English RSS'),
+        React.createElement('span', {className:'pill'}, 'No Google News')
       )
     ),
     React.createElement('div', {className:'search'},
