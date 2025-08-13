@@ -1,28 +1,83 @@
 (function(){
 const { useEffect, useState } = React;
 
-// Direct RSS sources - Israel (Hebrew) and US (English) only
-const IL_RSS = [
-  "https://www.ynet.co.il/Integration/StoryRss2.xml",
-  "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1",
-  "https://rcs.mako.co.il/rss/news-israel.xml",
-  "https://www.calcalist.co.il/GeneralRSS/0,16335,,00.xml"
+// Direct RSS sources that may allow CORS or use RSS-to-JSON APIs
+const RSS_SOURCES = [
+  // Israeli sources - try RSS to JSON conversion APIs
+  { name: "Ynet", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://www.ynet.co.il/Integration/StoryRss2.xml"), type: "json" },
+  { name: "Globes", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1"), type: "json" },
+  
+  // US sources - using RSS to JSON APIs
+  { name: "BBC", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://feeds.bbci.co.uk/news/world/rss.xml"), type: "json" },
+  { name: "CNN", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://rss.cnn.com/rss/edition.rss"), type: "json" },
+  
+  // Backup sources
+  { name: "Reuters", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://feeds.reuters.com/reuters/topNews"), type: "json" }
 ];
 
-const US_RSS = [
-  "https://feeds.bbci.co.uk/news/world/rss.xml",
-  "https://rss.cnn.com/rss/edition.rss",
-  "https://feeds.npr.org/1001/rss.xml",
-  "https://feeds.foxnews.com/foxnews/latest"
-];
+async function fetchNewsFromAPI(source) {
+  try {
+    console.log(`📡 Fetching from ${source.name}...`);
+    
+    const response = await fetch(source.url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'NewsAggregator/1.0'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.status !== 'ok') {
+      throw new Error(`API Error: ${data.message || 'Unknown error'}`);
+    }
+    
+    const articles = data.items.map((item, idx) => ({
+      id: source.name.toLowerCase() + "_" + idx + "_" + Date.now(),
+      title: item.title || "",
+      url: item.link || "",
+      originalUrl: item.link || "",
+      source: source.name.toLowerCase(),
+      publishedAt: item.pubDate || new Date().toISOString(),
+      description: (item.description || item.content || "").replace(/<[^>]+>/g, "").slice(0, 200),
+      image: item.thumbnail || item.enclosure?.link || null,
+      needsImageFetch: !item.thumbnail && !item.enclosure?.link,
+      score: 0
+    }));
+    
+    console.log(`✅ ${source.name}: ${articles.length} articles`);
+    return articles;
+    
+  } catch (error) {
+    console.error(`❌ ${source.name} failed: ${error.message}`);
+    return [];
+  }
+}
 
-// Fallback sources if main ones fail
-const FALLBACK_RSS = [
-  "https://feeds.reuters.com/reuters/topNews",
-  "https://feeds.washingtonpost.com/rss/world",
-  "https://feeds.nbcnews.com/nbcnews/public/news",
-  "https://feeds.skynews.com/feeds/rss/world.xml"
-];
+async function fetchNews() {
+  console.log("🚀 Starting news fetch...");
+  
+  const promises = RSS_SOURCES.map(source => fetchNewsFromAPI(source));
+  const results = await Promise.allSettled(promises);
+  
+  const allArticles = [];
+  let successCount = 0;
+  
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled' && result.value.length > 0) {
+      allArticles.push(...result.value);
+      successCount++;
+    }
+  });
+  
+  console.log(`📊 Fetched ${allArticles.length} articles from ${successCount}/${RSS_SOURCES.length} sources`);
+  
+  return allArticles;
+}
 
 function heVariants(q){
   const set = new Set([q]);
@@ -371,124 +426,81 @@ function App(){
     setError("");
     
     try {
-      const variants = heVariants(q).map(s=>s.toLowerCase());
-      const endpoints = [...IL_RSS, ...US_RSS];
-      console.log(`Total RSS sources configured: ${endpoints.length}`);
-      setScan({attempted:endpoints.length, succeeded:0});
+      console.log(`🔍 Searching for: "${q}"`);
       
-      // Fetch RSS feeds with timeout and limit concurrent requests
-      const fetchWithTimeout = (url) => {
-        return Promise.race([
-          fetchRSS(url),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout')), 15000)
-          )
-        ]);
-      };
+      const allArticles = await fetchNewsFromAllSources();
       
-      // Process in smaller batches to avoid overwhelming the proxies
-      const batchSize = 3;
-      const results = [];
-      
-      for (let i = 0; i < endpoints.length; i += batchSize) {
-        const batch = endpoints.slice(i, i + batchSize);
-        const batchResults = await Promise.allSettled(
-          batch.map(url => fetchWithTimeout(url))
-        );
-        results.push(...batchResults);
-        
-        // Small delay between batches
-        if (i + batchSize < endpoints.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-      
-      let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
-      console.log(`RSS fetch results: ${succeeded} succeeded out of ${endpoints.length} total`);
-      
-      // If most sources failed, try fallback sources
-      if (succeeded < 2 && FALLBACK_RSS.length > 0) {
-        console.log('Trying fallback RSS sources...');
-        const fallbackResults = await Promise.allSettled(
-          FALLBACK_RSS.map(url => fetchWithTimeout(url))
-        );
-        results.push(...fallbackResults);
-        succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
-        setScan({attempted:endpoints.length + FALLBACK_RSS.length, succeeded});
-      } else {
-        setScan({attempted:endpoints.length, succeeded});
-      }
-
-      if (succeeded === 0) {
-        setError("Unable to fetch news from any sources due to CORS restrictions. This is a temporary issue with external RSS feeds. Please try again later.");
+      if (allArticles.length === 0) {
+        setError("No articles found from any news sources. Please try again later.");
         setLoading(false);
         return;
       }
-
-      // Only show warning if less than 60% of sources are working (3 out of 5)
-      if (succeeded < endpoints.length * 0.6) {
-        setError(`Warning: Only ${succeeded} out of ${endpoints.length} news sources are working due to CORS issues. Results may be limited.`);
-      }
-
-      let merged=[]; const seen=new Set();
-      for (const r of results){
-        if (r.status!=='fulfilled') continue;
-        for (const it of r.value){
-          const key = (it.url||'')+'|'+(it.title||'').toLowerCase();
-          if (!seen.has(key)){ seen.add(key); merged.push(it); }
-        }
+      
+      // Filter articles based on search topic
+      const searchTerms = heVariants(q.toLowerCase());
+      const filtered = allArticles.filter(article => {
+        if (!q || q.trim() === '') return true;
+        const text = (article.title + " " + article.description).toLowerCase();
+        return searchTerms.some(term => text.includes(term));
+      });
+      
+      console.log(`🎯 Found ${filtered.length} articles matching "${q}"`);
+      
+      // Sort by relevance and date
+      const sorted = normalizeAndSort(filtered, q);
+      const finalResults = sorted.slice(0, 20); // Limit to 20 results
+      
+      setArticles(finalResults);
+      setScan({attempted: RSS_SOURCES.length, succeeded: allArticles.length > 0 ? RSS_SOURCES.length : 0});
+      
+      // Fetch images for articles that need them
+      if (finalResults.length > 0) {
+        setTimeout(() => {
+          finalResults.slice(0, 8).forEach(async (article, idx) => {
+            if (article.needsImageFetch && article.url) {
+              try {
+                const enhanced = await getOriginalArticleData(article.url);
+                if (enhanced?.image) {
+                  setArticles(prev => prev.map(a => 
+                    a.id === article.id ? {...a, image: enhanced.image, needsImageFetch: false} : a
+                  ));
+                }
+              } catch (e) {
+                // Ignore image fetch errors
+              }
+            }
+          });
+        }, 500);
       }
       
-      const filtered = merged.filter(item=>{
-        if (!q || q.trim() === '') return true; // Show all if no search query
-        
-        const title = (item.title || '').toLowerCase();
-        const description = (item.description || '').toLowerCase();
-        const searchQuery = q.toLowerCase().trim();
-        
-        // Check for exact phrase in title or description
-        const matchesTitle = title.includes(searchQuery);
-        const matchesDescription = description.includes(searchQuery);
-        const matches = matchesTitle || matchesDescription;
-        
-        // Debug log for troubleshooting
-        if (matches) {
-          console.log(`Found match for "${searchQuery}":`, {
-            title: item.title,
-            matchesTitle,
-            matchesDescription
-          });
-        }
-        
-        return matches;
-      });
-      let finalFiltered = filtered;
-      // Only show recent articles when no search query is provided
-      if (!q || q.trim() === '') {
-        finalFiltered = merged.slice(0, 120);
-      }
-      // If there's a search query but no results, finalFiltered will remain empty (which is correct)
-
-      Promise.all(finalFiltered.map(async (it)=>{
-        if (it.needsImageFetch && it.url){
-          const meta = await getOriginalArticleData(it.url);
-          if (meta){
-            if (meta.image) it.image = meta.image;
-            if (meta.enhancedTitle && meta.enhancedTitle.length > (it.title||'').length) it.enhancedTitle = meta.enhancedTitle;
-            if (meta.enhancedDescription && meta.enhancedDescription.length > (it.description||'').length) it.enhancedDescription = meta.enhancedDescription;
-          }
-        }
-        return it;
-      })).then(updated=>{
-        setArticles(normalizeAndSort(updated, q));
-      }).catch(()=>{
-        setArticles(normalizeAndSort(finalFiltered, q));
-      }).finally(()=> setLoading(false));
-    } catch (error) {
-      console.error("Error fetching news:", error);
-      setError("An error occurred while fetching news. Please try again.");
+    } catch (err) {
+      console.error("Search error:", err);
+      setError("Failed to search news sources: " + err.message);
+    } finally {
       setLoading(false);
     }
+  }
+
+  async function fetchNewsFromAllSources() {
+    console.log("🚀 Starting news fetch from all sources...");
+    
+    const promises = RSS_SOURCES.map(source => fetchNewsFromAPI(source));
+    const results = await Promise.allSettled(promises);
+    
+    const allArticles = [];
+    let successCount = 0;
+    
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value.length > 0) {
+        allArticles.push(...result.value);
+        successCount++;
+      }
+    });
+    
+    console.log(`📊 Fetched ${allArticles.length} articles from ${successCount}/${RSS_SOURCES.length} sources`);
+    setScan({attempted: RSS_SOURCES.length, succeeded: successCount});
+    
+    return allArticles;
   }
 
   return React.createElement('div', {className:'container'},
