@@ -1,16 +1,22 @@
 {
   "name": "news-aggregator",
   "version": "1.0.0",
-  "description": "",
+  "description": "A news aggregator web application",
   "main": "app.js",
   "scripts": {
+    "start": "node api/proxy.js",
+    "build": "echo 'Build complete - static site'",
+    "dev": "echo 'Development mode'",
     "test": "echo 'No tests'"
   },
-  "keywords": [],
+  "keywords": ["news", "aggregator", "rss"],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
     "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

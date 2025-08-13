@@ -57,41 +57,57 @@ function normalizeAndSort(arr, qForRelevance){
   });
 }
 async function proxyFetch(url){
-  const r = await fetch("/api/proxy?url=" + encodeURIComponent(url));
-  if (!r.ok) throw new Error("Proxy fetch failed: "+r.status);
-  return r.text();
+  try {
+    const r = await fetch("/api/proxy?url=" + encodeURIComponent(url));
+    if (!r.ok) {
+      const errorData = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+      throw new Error(`Proxy fetch failed: ${errorData.error || r.status}`);
+    }
+    return r.text();
+  } catch (error) {
+    console.error(`Failed to fetch ${url}:`, error.message);
+    throw error;
+  }
 }
 async function fetchRSS(url){
-  const xmlText = await proxyFetch(url);
-  const xml = new DOMParser().parseFromString(xmlText, "text/xml");
-  const parseError = xml.querySelector('parsererror');
-  if (parseError) throw new Error("XML parse error");
-  const items = Array.from(xml.querySelectorAll("item, entry")).map((it,idx)=>{
-    const title = it.querySelector("title")?.textContent?.trim() || "";
-    let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
-    const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
-    const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
-    const source = (new URL(url)).hostname.replace(/^www\./,"");
-    try{
-      const base = new URL(url);
-      if (link) {
-        link = new URL(link, base).toString();
-        const u = new URL(link);
-        if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
-          link = u.searchParams.get("q") || u.searchParams.get("url");
+  try {
+    const xmlText = await proxyFetch(url);
+    const xml = new DOMParser().parseFromString(xmlText, "text/xml");
+    const parseError = xml.querySelector('parsererror');
+    if (parseError) {
+      console.error(`XML parse error for ${url}:`, parseError.textContent);
+      throw new Error("XML parse error");
+    }
+    const items = Array.from(xml.querySelectorAll("item, entry")).map((it,idx)=>{
+      const title = it.querySelector("title")?.textContent?.trim() || "";
+      let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
+      const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
+      const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
+      const source = (new URL(url)).hostname.replace(/^www\./,"");
+      try{
+        const base = new URL(url);
+        if (link) {
+          link = new URL(link, base).toString();
+          const u = new URL(link);
+          if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
+            link = u.searchParams.get("q") || u.searchParams.get("url");
+          }
         }
-      }
-    }catch(_){ }
-    return {
-      id: source+"_"+idx+"_"+(link||title).slice(0,40),
-      title, url: link, originalUrl: link, source,
-      publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
-      description: (description||"").replace(/<[^>]+>/g,""),
-      image: "https://picsum.photos/seed/"+encodeURIComponent(title||source)+"/900/600",
-      needsImageFetch: true, score: 0
-    };
-  });
-  return items;
+      }catch(_){ }
+      return {
+        id: source+"_"+idx+"_"+(link||title).slice(0,40),
+        title, url: link, originalUrl: link, source,
+        publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
+        description: (description||"").replace(/<[^>]+>/g,""),
+        image: "https://picsum.photos/seed/"+encodeURIComponent(title||source)+"/900/600",
+        needsImageFetch: true, score: 0
+      };
+    });
+    return items;
+  } catch (error) {
+    console.error(`Failed to fetch RSS from ${url}:`, error.message);
+    return [];
+  }
 }
 async function getOriginalArticleData(targetUrl){
   if (!/^https?:\/\//.test(targetUrl)) return null;
@@ -125,57 +141,69 @@ function App(){
   const [topic, setTopic] = useState(localStorage.getItem("news_last_topic") || "");
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [scan, setScan] = useState({attempted:0, succeeded:0});
 
   React.useEffect(()=>{ localStorage.setItem("news_last_topic", topic); }, [topic]);
 
   async function fetchNews(q){
-    setLoading(true); setArticles([]);
-    const variants = heVariants(q).map(s=>s.toLowerCase());
-    const endpoints = [...IL_RSS, ...INTL_RSS];
-    setScan({attempted:endpoints.length, succeeded:0});
-    let results = await Promise.allSettled(endpoints.map(fetchRSS));
-    let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
-    setScan({attempted:endpoints.length, succeeded});
+    setLoading(true); 
+    setArticles([]);
+    setError("");
+    
+    try {
+      const variants = heVariants(q).map(s=>s.toLowerCase());
+      const endpoints = [...IL_RSS, ...INTL_RSS];
+      setScan({attempted:endpoints.length, succeeded:0});
+      let results = await Promise.allSettled(endpoints.map(fetchRSS));
+      let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
+      setScan({attempted:endpoints.length, succeeded});
 
-    let merged=[]; const seen=new Set();
-    for (const r of results){
-      if (r.status!=='fulfilled') continue;
-      for (const it of r.value){
-        const key = (it.url||'')+'|'+(it.title||'').toLowerCase();
-        if (!seen.has(key)){ seen.add(key); merged.push(it); }
+      if (succeeded === 0) {
+        setError("Unable to fetch news from any sources. Please try again later.");
+        setLoading(false);
+        return;
       }
-    }
-    if (succeeded===0){
-      setLoading(false);
-      setArticles([]);
-      return;
-    }
-    const filtered = merged.filter(item=>{
-      let hay = ((item.title||'')+' '+(item.description||'')).toLowerCase()
-                 .replace(/&nbsp;|nbsp;|nbsp/gi,' ').replace(/\u00a0/g,' ');
-      return variants.length ? variants.some(v=>hay.includes(v)) : true;
-    });
-    let finalFiltered = filtered;
-    if (finalFiltered.length === 0){
-      finalFiltered = merged.slice(0, 120);
-    }
 
-    Promise.all(finalFiltered.map(async (it)=>{
-      if (it.needsImageFetch && it.url){
-        const meta = await getOriginalArticleData(it.url);
-        if (meta){
-          if (meta.image) it.image = meta.image;
-          if (meta.enhancedTitle && meta.enhancedTitle.length > (it.title||'').length) it.enhancedTitle = meta.enhancedTitle;
-          if (meta.enhancedDescription && meta.enhancedDescription.length > (it.description||'').length) it.enhancedDescription = meta.enhancedDescription;
+      let merged=[]; const seen=new Set();
+      for (const r of results){
+        if (r.status!=='fulfilled') continue;
+        for (const it of r.value){
+          const key = (it.url||'')+'|'+(it.title||'').toLowerCase();
+          if (!seen.has(key)){ seen.add(key); merged.push(it); }
         }
       }
-      return it;
-    })).then(updated=>{
-      setArticles(normalizeAndSort(updated, q));
-    }).catch(()=>{
-      setArticles(normalizeAndSort(finalFiltered, q));
-    }).finally(()=> setLoading(false));
+      
+      const filtered = merged.filter(item=>{
+        let hay = ((item.title||'')+' '+(item.description||'')).toLowerCase()
+                   .replace(/&nbsp;|nbsp;|nbsp/gi,' ').replace(/\u00a0/g,' ');
+        return variants.length ? variants.some(v=>hay.includes(v)) : true;
+      });
+      let finalFiltered = filtered;
+      if (finalFiltered.length === 0){
+        finalFiltered = merged.slice(0, 120);
+      }
+
+      Promise.all(finalFiltered.map(async (it)=>{
+        if (it.needsImageFetch && it.url){
+          const meta = await getOriginalArticleData(it.url);
+          if (meta){
+            if (meta.image) it.image = meta.image;
+            if (meta.enhancedTitle && meta.enhancedTitle.length > (it.title||'').length) it.enhancedTitle = meta.enhancedTitle;
+            if (meta.enhancedDescription && meta.enhancedDescription.length > (it.description||'').length) it.enhancedDescription = meta.enhancedDescription;
+          }
+        }
+        return it;
+      })).then(updated=>{
+        setArticles(normalizeAndSort(updated, q));
+      }).catch(()=>{
+        setArticles(normalizeAndSort(finalFiltered, q));
+      }).finally(()=> setLoading(false));
+    } catch (error) {
+      console.error("Error fetching news:", error);
+      setError("An error occurred while fetching news. Please try again.");
+      setLoading(false);
+    }
   }
 
   return React.createElement('div', {className:'container'},
@@ -195,9 +223,10 @@ function App(){
         onKeyDown: e=>{ if (e.key==='Enter') fetchNews(topic); }
       }),
       React.createElement('button', {className:'btn', onClick: ()=>fetchNews(topic), disabled:loading}, loading?'Loading…':'Search'),
-      React.createElement('button', {className:'btn', style:{background:'#334155'}, onClick: ()=>{setTopic(''); setArticles([]);} }, 'Clear')
+      React.createElement('button', {className:'btn', style:{background:'#334155'}, onClick: ()=>{setTopic(''); setArticles([]); setError('');} }, 'Clear')
     ),
-    articles.length===0 && !loading ? React.createElement('div', {className:'empty'}, 'Search for a topic to see results.') : null,
+    error ? React.createElement('div', {className:'error', style:{background:'rgba(239,68,68,0.1)', color:'#dc2626', padding:'12px', borderRadius:'8px', margin:'12px 0'}}, error) : null,
+    articles.length===0 && !loading && !error ? React.createElement('div', {className:'empty'}, 'Search for a topic to see results.') : null,
     React.createElement('div', {className:'grid'},
       articles.map(a=>
         React.createElement('a', {
@@ -208,7 +237,14 @@ function App(){
           style: { textDecoration: 'none', color: 'inherit' }
         },
           React.createElement('article', null,
-            React.createElement('img', {src:a.image, alt:''}),
+            React.createElement('img', {
+              src: a.image, 
+              alt: '',
+              onError: (e) => {
+                e.target.src = `https://via.placeholder.com/900x600/e5e7eb/6b7280?text=${encodeURIComponent(a.source)}`;
+              },
+              style: { objectFit: 'cover' }
+            }),
             React.createElement('div', {className:'pad'},
               React.createElement('div', {className:'meta'},
                 React.createElement('span', {className:'src'}, a.source),

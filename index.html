@@ -13,8 +13,16 @@
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:linear-gradient(135deg,var(--bg1),var(--bg2))}
     #root{min-height:100vh;color:#0f172a}
     .container{max-width:1100px;margin:0 auto;padding:24px}
-    .header{display:flex;align-items:center;justify-content:space-between;color:#fff}
-    .search{display:flex;gap:12px;margin:18px 0}
+    .header{display:flex;align-items:center;justify-content:space-between;color:#fff;flex-wrap:wrap;gap:12px}
+    @media (max-width: 768px) {
+      .header{flex-direction:column;align-items:flex-start}
+      .header > div{display:flex;flex-wrap:wrap;gap:6px}
+    }
+    .search{display:flex;gap:12px;margin:18px 0;flex-wrap:wrap}
+    @media (max-width: 480px) {
+      .search{flex-direction:column}
+      .search input{margin-bottom:8px}
+    }
     .search input{flex:1;padding:16px;border-radius:14px;border:0;font-size:18px}
     .btn{padding:12px 16px;border-radius:14px;border:0;background:#10b981;color:#fff;font-weight:700;cursor:pointer}
     .btn:disabled{opacity:.5;cursor:not-allowed}
