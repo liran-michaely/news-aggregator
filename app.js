@@ -56,25 +56,62 @@ function normalizeAndSort(arr, qForRelevance){
 }
 async function proxyFetch(url){
   // Use a more reliable proxy service that works better with GitHub Pages
-  const proxies = [
-    {
-      name: 'ThingProxy',
-      url: `https://thingproxy.freeboard.io/fetch/${url}`,
-      parseResponse: async (response) => response.text()
-    },
-    {
-      name: 'JSONProxy',
-      url: `https://jsonp.afeld.me/?url=${encodeURIComponent(url)}`,
-      parseResponse: async (response) => response.text()
-    },
-    {
-      name: 'AllOrigins-Raw',
-      url: `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-      parseResponse: async (response) => response.text()
-    }
-  ];
+// Proxy services for CORS bypass - Updated with working services
+const PROXY_SERVICES = [
+  { name: "CorsAnywhere-Public", url: (u) => `https://cors-anywhere.herokuapp.com/${u}`, emoji: "🔄" },
+  { name: "AllOrigins", url: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, isJson: true, emoji: "🔄" },
+  { name: "CorsProxy", url: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`, emoji: "🔄" },
+  { name: "CorsProxy-Org", url: (u) => `https://corsproxy.org/?${encodeURIComponent(u)}`, emoji: "🔄" }
+];
 
-  for (const proxy of proxies) {
+async function proxyFetch(url, timeout = 10000) {
+  console.log(`🔄 Fetching: ${url}`);
+  
+  for (const proxy of PROXY_SERVICES) {
+    try {
+      console.log(`${proxy.emoji} Trying ${proxy.name}...`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch(proxy.url(url), {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml, text/plain, */*',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      let text;
+      if (proxy.isJson) {
+        const jsonData = await response.json();
+        text = jsonData.contents || jsonData.data || '';
+      } else {
+        text = await response.text();
+      }
+      
+      if (!text || text.length < 100) {
+        throw new Error(`Content too short: ${text.length} chars`);
+      }
+      
+      console.log(`✅ ${proxy.name} succeeded - ${text.length} chars`);
+      return text;
+      
+    } catch (error) {
+      console.log(`❌ ${proxy.name} failed: ${error.message}`);
+      continue;
+    }
+  }
+  
+  throw new Error('All proxy services failed');
+}  for (const proxy of proxies) {
     try {
       console.log(`🔄 Trying ${proxy.name} for ${url}`);
       
@@ -116,7 +153,27 @@ async function proxyFetch(url){
 }
 async function fetchRSS(url){
   try {
-    const xmlText = await proxyFetch(url);
+    let xmlText;
+    
+    // First try direct fetch (some RSS feeds allow CORS)
+    try {
+      console.log(`🔄 Trying direct fetch for: ${url}`);
+      const directResponse = await fetch(url, {
+        headers: {
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        }
+      });
+      
+      if (directResponse.ok) {
+        xmlText = await directResponse.text();
+        console.log(`✅ Direct fetch succeeded for: ${url}`);
+      } else {
+        throw new Error(`Direct fetch failed: ${directResponse.status}`);
+      }
+    } catch (directError) {
+      console.log(`❌ Direct fetch failed, trying proxy: ${directError.message}`);
+      xmlText = await proxyFetch(url);
+    }
     
     // Clean up the XML text to handle encoding and entity issues
     const cleanXml = xmlText
