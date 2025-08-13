@@ -4,27 +4,17 @@ const { useEffect, useState } = React;
 // Direct RSS sources - Israel (Hebrew) and US (English) only
 const IL_RSS = [
   "https://www.ynet.co.il/Integration/StoryRss2.xml",
-  "https://rss.walla.co.il/rss/1",
   "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1",
   "https://rcs.mako.co.il/rss/news-israel.xml",
   "https://www.calcalist.co.il/home/0,7340,L-8,00.html?service=rss",
-  "https://www.themarker.com/cmlink/1.147",
-  "https://www.kan.org.il/content/kan/rss/news.xml",
-  "https://13tv.co.il/feed/",
-  "https://www.news1.co.il/rss/main",
-  "https://www.makorrishon.co.il/rss/main"
+  "https://www.themarker.com/cmlink/1.147"
 ];
 
 const US_RSS = [
-  "https://www.reuters.com/rss/world",
-  "https://apnews.com/hub/apf-topnews?utm_source=rss",
+  "https://feeds.bbci.co.uk/news/rss.xml",
   "https://rss.cnn.com/rss/edition.rss",
-  "https://www.npr.org/rss/rss.php?id=1001",
-  "https://feeds.washingtonpost.com/rss/world",
-  "https://www.cbsnews.com/latest/rss/main",
   "https://feeds.abcnews.com/abcnews/topstories",
   "https://feeds.nbcnews.com/nbcnews/public/news",
-  "https://www.usatoday.com/rss/news/",
   "https://feeds.foxnews.com/foxnews/latest"
 ];
 
@@ -59,34 +49,80 @@ function normalizeAndSort(arr, qForRelevance){
   });
 }
 async function proxyFetch(url){
-  try {
-    // Use corsproxy.io which is more reliable for GitHub Pages
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    const r = await fetch(proxyUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+  // List of CORS proxy services to try
+  const proxies = [
+    {
+      url: `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+      parseResponse: async (response) => {
+        const json = await response.json();
+        return json.contents;
       }
-    });
-    
-    if (!r.ok) {
-      throw new Error(`CORS proxy fetch failed: ${r.status} ${r.statusText}`);
+    },
+    {
+      url: `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      parseResponse: async (response) => response.text()
+    },
+    {
+      url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+      parseResponse: async (response) => response.text()
     }
-    
-    return r.text();
-  } catch (error) {
-    console.error(`Failed to fetch ${url}:`, error.message);
-    throw error;
+  ];
+
+  let lastError;
+  
+  for (const proxy of proxies) {
+    try {
+      const response = await fetch(proxy.url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/rss+xml, application/xml, text/xml, */*'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const text = await proxy.parseResponse(response);
+      
+      // Basic validation that we got XML content
+      if (text && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
+        return text;
+      } else {
+        throw new Error('Invalid XML response');
+      }
+      
+    } catch (error) {
+      lastError = error;
+      console.log(`Proxy failed for ${url}: ${error.message}`);
+      continue;
+    }
   }
+  
+  throw lastError || new Error('All proxies failed');
 }
 async function fetchRSS(url){
   try {
     const xmlText = await proxyFetch(url);
-    const xml = new DOMParser().parseFromString(xmlText, "text/xml");
+    
+    // Clean up the XML text to handle encoding issues
+    const cleanXml = xmlText
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove invalid XML characters
+      .replace(/^\s*<\?xml[^>]*\?>\s*/, '') // Remove XML declaration if present
+      .trim();
+    
+    // Try to parse as XML
+    const xml = new DOMParser().parseFromString(cleanXml, "application/xml");
     const parseError = xml.querySelector('parsererror');
+    
     if (parseError) {
       console.error(`XML parse error for ${url}:`, parseError.textContent);
-      throw new Error("XML parse error");
+      // Try parsing as HTML in case it's not proper XML
+      const htmlDoc = new DOMParser().parseFromString(cleanXml, "text/html");
+      const items = Array.from(htmlDoc.querySelectorAll("item, entry"));
+      if (items.length === 0) {
+        throw new Error("No items found in feed");
+      }
     }
     const items = Array.from(xml.querySelectorAll("item, entry")).map((it,idx)=>{
       const title = it.querySelector("title")?.textContent?.trim() || "";
@@ -165,7 +201,34 @@ function App(){
       const variants = heVariants(q).map(s=>s.toLowerCase());
       const endpoints = [...IL_RSS, ...US_RSS];
       setScan({attempted:endpoints.length, succeeded:0});
-      let results = await Promise.allSettled(endpoints.map(fetchRSS));
+      
+      // Fetch RSS feeds with timeout and limit concurrent requests
+      const fetchWithTimeout = (url) => {
+        return Promise.race([
+          fetchRSS(url),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 15000)
+          )
+        ]);
+      };
+      
+      // Process in smaller batches to avoid overwhelming the proxies
+      const batchSize = 3;
+      const results = [];
+      
+      for (let i = 0; i < endpoints.length; i += batchSize) {
+        const batch = endpoints.slice(i, i + batchSize);
+        const batchResults = await Promise.allSettled(
+          batch.map(url => fetchWithTimeout(url))
+        );
+        results.push(...batchResults);
+        
+        // Small delay between batches
+        if (i + batchSize < endpoints.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
       let succeeded = results.filter(r=>r.status==='fulfilled' && r.value.length>0).length;
       setScan({attempted:endpoints.length, succeeded});
 
