@@ -5,18 +5,23 @@ const { useEffect, useState } = React;
 const IL_RSS = [
   "https://www.ynet.co.il/Integration/StoryRss2.xml",
   "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1",
-  "https://rcs.mako.co.il/rss/news-israel.xml"
+  "https://rcs.mako.co.il/rss/news-israel.xml",
+  "https://www.calcalist.co.il/GeneralRSS/0,16335,,00.xml"
 ];
 
 const US_RSS = [
   "https://feeds.bbci.co.uk/news/world/rss.xml",
-  "https://rss.cnn.com/rss/edition.rss"
+  "https://rss.cnn.com/rss/edition.rss",
+  "https://feeds.npr.org/1001/rss.xml",
+  "https://feeds.foxnews.com/foxnews/latest"
 ];
 
 // Fallback sources if main ones fail
 const FALLBACK_RSS = [
   "https://feeds.reuters.com/reuters/topNews",
-  "https://feeds.washingtonpost.com/rss/world"
+  "https://feeds.washingtonpost.com/rss/world",
+  "https://feeds.nbcnews.com/nbcnews/public/news",
+  "https://feeds.skynews.com/feeds/rss/world.xml"
 ];
 
 function heVariants(q){
@@ -144,12 +149,41 @@ async function fetchRSS(url){
 }
 
 function parseRSSItems(doc, url) {
+  const sourceDomain = new URL(url).hostname.replace(/^www\./, "");
+  
   const items = Array.from(doc.querySelectorAll("item, entry")).map((it,idx)=>{
     const title = it.querySelector("title")?.textContent?.trim() || "";
     let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
     const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
     const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
-    const source = (new URL(url)).hostname.replace(/^www\./,"");
+    const source = sourceDomain;
+    
+    // Try to get image from RSS feed with domain validation
+    let rssImage = it.querySelector("enclosure[type^='image']")?.getAttribute("url") ||
+                   it.querySelector("media\\:thumbnail, thumbnail")?.getAttribute("url") ||
+                   it.querySelector("media\\:content[medium='image'], content[medium='image']")?.getAttribute("url");
+    
+    // Validate RSS image domain
+    if (rssImage) {
+      try {
+        const imageUrl = new URL(rssImage);
+        const imageDomain = imageUrl.hostname;
+        const isSameDomain = imageDomain === sourceDomain || imageDomain.includes(sourceDomain);
+        const isTrustedCDN = imageDomain.includes('cloudfront.net') || 
+                           imageDomain.includes('cloudinary.com') ||
+                           imageDomain.includes('images.') ||
+                           imageDomain.includes('static.') ||
+                           imageDomain.includes('cdn.') ||
+                           imageDomain.includes('media.');
+        
+        if (!isSameDomain && !isTrustedCDN) {
+          console.log(`🚫 RSS: Blocked image from untrusted domain: ${imageDomain} for source ${sourceDomain}`);
+          rssImage = null;
+        }
+      } catch (e) {
+        rssImage = null;
+      }
+    }
     
     try{
       const base = new URL(url);
@@ -167,8 +201,8 @@ function parseRSSItems(doc, url) {
       title, url: link, originalUrl: link, source,
       publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
       description: (description||"").replace(/<[^>]+>/g,""),
-      image: null, // No placeholder image, will fetch from content
-      needsImageFetch: true, score: 0
+      image: rssImage, // Use validated RSS image if available
+      needsImageFetch: !rssImage, score: 0
     };
   });
   return items;
@@ -178,25 +212,67 @@ async function getOriginalArticleData(targetUrl){
   try{
     const html = await proxyFetch(targetUrl);
     const doc = new DOMParser().parseFromString(html, "text/html");
+    
+    // Extract domain from the original article URL
+    const articleDomain = new URL(targetUrl).hostname;
+    
     let image = doc.querySelector('meta[property="og:image"]')?.getAttribute('content')
               || doc.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
+    
     if (!image){
       const img = doc.querySelector("article img, .article img, .content img, .post img, img");
       if (img){
         image = img.getAttribute("src") || img.getAttribute("data-src");
       }
     }
-    if (image && !/^https?:\/\//.test(image)){
-      try{
-        const base = new URL(targetUrl);
-        image = new URL(image, base.origin).toString();
-      }catch(_){}
+    
+    // Validate and fix image URL
+    if (image) {
+      try {
+        // If relative URL, make it absolute using the article's domain
+        if (!/^https?:\/\//.test(image)) {
+          const base = new URL(targetUrl);
+          image = new URL(image, base.origin).toString();
+        }
+        
+        // Ensure image is from the same domain or trusted CDN
+        const imageUrl = new URL(image);
+        const imageDomain = imageUrl.hostname;
+        
+        // Only allow images from the same domain or well-known CDNs
+        const isSameDomain = imageDomain === articleDomain || imageDomain.includes(articleDomain.replace('www.', ''));
+        const isTrustedCDN = imageDomain.includes('cloudfront.net') || 
+                           imageDomain.includes('cloudinary.com') ||
+                           imageDomain.includes('imgur.com') ||
+                           imageDomain.includes('images.') ||
+                           imageDomain.includes('static.') ||
+                           imageDomain.includes('cdn.') ||
+                           imageDomain.includes('media.');
+        
+        if (!isSameDomain && !isTrustedCDN) {
+          console.log(`🚫 Blocked image from untrusted domain: ${imageDomain} for article from ${articleDomain}`);
+          image = null;
+        }
+        
+        // Validate image file extension
+        if (image && !/(\.jpg|\.jpeg|\.png|\.webp|\.gif)(\?|$)/i.test(image)) {
+          console.log(`🚫 Invalid image format for: ${image}`);
+          image = null;
+        }
+        
+      } catch (e) {
+        console.log(`🚫 Invalid image URL: ${image}`);
+        image = null;
+      }
     }
+    
     const enhancedTitle = doc.querySelector("meta[property='og:title']")?.content || "";
     const enhancedDescription = doc.querySelector("meta[property='og:description']")?.content
                              || doc.querySelector("meta[name='description']")?.content || "";
+    
     return { image, enhancedTitle, enhancedDescription };
   }catch(e){
+    console.error(`❌ Failed to fetch article data from ${targetUrl}:`, e.message);
     return null;
   }
 }
