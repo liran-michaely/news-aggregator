@@ -1,5 +1,3 @@
-import fetch from 'node-fetch';
-
 export default async function handler(req, res) {
   // Set CORS headers for all requests
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,54 +5,69 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   
   if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
+    return res.status(200).end();
   }
   
   if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
+    return res.status(405).json({ error: 'Method not allowed' });
   }
+  
   const url = req.query.url;
   if (!url) {
-    res.status(400).json({ error: 'Missing url parameter' });
-    return;
+    return res.status(400).json({ error: 'Missing url parameter' });
   }
+  
   let target;
   try {
     target = new URL(url);
-  } catch (_) {
-    res.status(400).json({ error: 'Invalid url parameter' });
-    return;
+  } catch (error) {
+    return res.status(400).json({ error: 'Invalid url parameter' });
   }
+  
+  // Security check for internal networks
   const forbidden = ['localhost','127.0.0.1','0.0.0.0', '10.', '192.168.', '172.'];
   if (forbidden.some(host => target.hostname.includes(host)) || !['http:','https:'].includes(target.protocol)) {
-    res.status(400).json({ error: 'Forbidden host' });
-    return;
+    return res.status(400).json({ error: 'Forbidden host' });
   }
+  
   try {
-    const r = await fetch(target.toString(), {
+    // Use Node.js fetch (available in Node 18+) or import fetch for older versions
+    const fetchFunction = global.fetch || (await import('node-fetch')).default;
+    
+    const response = await fetchFunction(target.toString(), {
+      method: 'GET',
       headers: { 
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': '*/*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control': 'no-cache'
       },
-      redirect: 'follow',
-      timeout: 10000
+      redirect: 'follow'
     });
     
-    if (!r.ok) {
-      throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+    if (!response.ok) {
+      console.error(`Fetch failed for ${url}: ${response.status} ${response.statusText}`);
+      return res.status(502).json({ 
+        error: 'Failed to fetch resource', 
+        status: response.status,
+        statusText: response.statusText 
+      });
     }
     
-    const text = await r.text();
+    const text = await response.text();
+    
+    // Set response headers
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=1800');
-    const ct = r.headers.get('content-type') || 'text/plain; charset=utf-8';
-    res.setHeader('Content-Type', ct);
-    res.status(200).send(text);
-  } catch (e) {
-    console.error('Proxy error:', e.message);
-    res.status(502).json({ error: 'Failed to fetch resource', details: e.message });
+    const contentType = response.headers.get('content-type') || 'application/xml; charset=utf-8';
+    res.setHeader('Content-Type', contentType);
+    
+    return res.status(200).send(text);
+    
+  } catch (error) {
+    console.error('Proxy error for', url, ':', error.message);
+    return res.status(502).json({ 
+      error: 'Failed to fetch resource', 
+      details: error.message 
+    });
   }
 }
