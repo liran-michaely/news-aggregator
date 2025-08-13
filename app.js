@@ -185,12 +185,27 @@ function App(){
         const searchQuery = q.toLowerCase().trim();
         
         // Check for exact phrase in title or description
-        return title.includes(searchQuery) || description.includes(searchQuery);
+        const matchesTitle = title.includes(searchQuery);
+        const matchesDescription = description.includes(searchQuery);
+        const matches = matchesTitle || matchesDescription;
+        
+        // Debug log for troubleshooting
+        if (matches) {
+          console.log(`Found match for "${searchQuery}":`, {
+            title: item.title,
+            matchesTitle,
+            matchesDescription
+          });
+        }
+        
+        return matches;
       });
       let finalFiltered = filtered;
-      if (finalFiltered.length === 0 && (!q || q.trim() === '')){
+      // Only show recent articles when no search query is provided
+      if (!q || q.trim() === '') {
         finalFiltered = merged.slice(0, 120);
       }
+      // If there's a search query but no results, finalFiltered will remain empty (which is correct)
 
       Promise.all(finalFiltered.map(async (it)=>{
         if (it.needsImageFetch && it.url){
