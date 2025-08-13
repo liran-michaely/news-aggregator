@@ -199,17 +199,27 @@ function App(){
     ),
     articles.length===0 && !loading ? React.createElement('div', {className:'empty'}, 'Search for a topic to see results.') : null,
     React.createElement('div', {className:'grid'},
-      articles.map(a=> React.createElement('article', {key:a.id},
-        React.createElement('img', {src:a.image, alt:''}),
-        React.createElement('div', {className:'pad'},
-          React.createElement('div', {className:'meta'},
-            React.createElement('span', {className:'src'}, a.source),
-            React.createElement('span', null, timeAgo(a.publishedAt))
-          ),
-          React.createElement('h3', {style:{margin:'8px 0 6px',fontSize:18,color:'#111827'}}, a.enhancedTitle || a.title),
-          a.description ? React.createElement('p', {style:{margin:0,color:'#334155'}}, a.enhancedDescription || a.description) : null
+      articles.map(a=>
+        React.createElement('a', {
+          key: a.id,
+          href: a.url || '#',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          style: { textDecoration: 'none', color: 'inherit' }
+        },
+          React.createElement('article', null,
+            React.createElement('img', {src:a.image, alt:''}),
+            React.createElement('div', {className:'pad'},
+              React.createElement('div', {className:'meta'},
+                React.createElement('span', {className:'src'}, a.source),
+                React.createElement('span', null, timeAgo(a.publishedAt))
+              ),
+              React.createElement('h3', {style:{margin:'8px 0 6px',fontSize:18,color:'#111827'}}, a.enhancedTitle || a.title),
+              a.description ? React.createElement('p', {style:{margin:0,color:'#334155'}}, a.enhancedDescription || a.description) : null
+            )
+          )
         )
-      ))
+      )
     )
   );
 }
