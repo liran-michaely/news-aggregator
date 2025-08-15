@@ -20,31 +20,26 @@
         return date.toLocaleDateString();
     }
 
+    function normalizeText(text) {
+        if (!text) return '';
+        // Handles both English case-insensitivity and keeps Hebrew characters as-is
+        return text.toLowerCase();
+    }
+
     function scoreRelevance(article, searchTerm) {
         if (!searchTerm) return 0;
         
         const terms = getSearchVariants(searchTerm);
-        const title = article.title || '';
-        const description = article.description || '';
+        const normalizedTitle = normalizeText(article.title);
+        const normalizedDescription = normalizeText(article.description);
         
         let score = 0;
         
         // Check all term variants
         for (const term of terms) {
-            const isHebrew = /[\u0590-\u05FF]/.test(term);
-            
-            if (isHebrew) {
-                // For Hebrew, check exact matches
-                if (title.includes(term)) score += 10;
-                if (description.includes(term)) score += 5;
-            } else {
-                // For English, use case-insensitive matching
-                const lowerTitle = title.toLowerCase();
-                const lowerDescription = description.toLowerCase();
-                const lowerTerm = term.toLowerCase();
-                if (lowerTitle.includes(lowerTerm)) score += 10;
-                if (lowerDescription.includes(lowerTerm)) score += 5;
-            }
+            const normalizedTerm = normalizeText(term);
+            if (normalizedTitle.includes(normalizedTerm)) score += 10;
+            if (normalizedDescription.includes(normalizedTerm)) score += 5;
         }
         
         // Recent articles get slight boost
@@ -355,12 +350,17 @@
         const [error, setError] = useState('');
         const [stats, setStats] = useState({ sources: 0, articles: 0, lastUpdate: null });
 
-        // Load articles on mount
+        // Load articles and read search term from URL on mount
         useEffect(() => {
-            handleSearch();
+            const urlParams = new URLSearchParams(window.location.search);
+            const searchFromUrl = urlParams.get('search');
+            if (searchFromUrl) {
+                setSearchTerm(searchFromUrl);
+            }
+            handleSearch(); // Fetch articles on initial load
         }, []);
 
-        // Filter articles when search term changes
+        // Filter articles when search term or articles change
         useEffect(() => {
             if (!searchTerm.trim()) {
                 setFilteredArticles(articles.slice(0, 20)); // Show recent articles
@@ -369,24 +369,12 @@
 
             const searchVariants = getSearchVariants(searchTerm);
             const filtered = articles.filter(article => {
-                // Get text content for searching - handle both Hebrew and English
-                const title = article.title || '';
-                const description = article.description || '';
+                const normalizedTitle = normalizeText(article.title);
+                const normalizedDescription = normalizeText(article.description);
                 
-                // Check if any search variant matches (case-insensitive for English, exact for Hebrew)
                 return searchVariants.some(variant => {
-                    const isHebrew = /[\u0590-\u05FF]/.test(variant);
-                    
-                    if (isHebrew) {
-                        // For Hebrew, check exact matches and substrings
-                        return title.includes(variant) || description.includes(variant);
-                    } else {
-                        // For English, use case-insensitive matching
-                        const lowerTitle = title.toLowerCase();
-                        const lowerDescription = description.toLowerCase();
-                        const lowerVariant = variant.toLowerCase();
-                        return lowerTitle.includes(lowerVariant) || lowerDescription.includes(lowerVariant);
-                    }
+                    const normalizedVariant = normalizeText(variant);
+                    return normalizedTitle.includes(normalizedVariant) || normalizedDescription.includes(normalizedVariant);
                 });
             });
 
@@ -427,6 +415,10 @@
 
         function handleClear() {
             setSearchTerm('');
+            // Update URL to reflect cleared search
+            const url = new URL(window.location);
+            url.searchParams.delete('search');
+            window.history.pushState({}, '', url);
         }
 
         // Render the app
@@ -450,13 +442,23 @@
                     onChange: (e) => setSearchTerm(e.target.value),
                     onKeyDown: (e) => {
                         if (e.key === 'Enter') {
-                            handleSearch();
+                            // Update URL on new search
+                            const url = new URL(window.location);
+                            url.searchParams.set('search', searchTerm);
+                            window.history.pushState({}, '', url);
+                            // The useEffect for [articles, searchTerm] will handle the filtering
                         }
                     }
                 }),
                 h('button', {
                     className: 'search-button',
-                    onClick: handleSearch,
+                    onClick: () => {
+                        // Update URL on new search
+                        const url = new URL(window.location);
+                        url.searchParams.set('search', searchTerm);
+                        window.history.pushState({}, '', url);
+                        // The useEffect for [articles, searchTerm] will handle the filtering
+                    },
                     disabled: loading
                 }, loading ? '...' : 'Search'),
                 h('button', {
