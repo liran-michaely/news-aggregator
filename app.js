@@ -1,559 +1,590 @@
-(function(){
-const { useEffect, useState } = React;
+(function() {
+    const { useState, useEffect, createElement: h } = React;
 
-// Direct RSS sources that may allow CORS or use RSS-to-JSON APIs
-const RSS_SOURCES = [
-  // Israeli sources - try RSS to JSON conversion APIs
-  { name: "Ynet", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://www.ynet.co.il/Integration/StoryRss2.xml"), type: "json" },
-  { name: "Globes", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FrontPage1"), type: "json" },
-  
-  // US sources - using RSS to JSON APIs
-  { name: "BBC", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://feeds.bbci.co.uk/news/world/rss.xml"), type: "json" },
-  { name: "CNN", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://rss.cnn.com/rss/edition.rss"), type: "json" },
-  
-  // Backup sources
-  { name: "Reuters", url: "https://rss2json.com/api.json?rss_url=" + encodeURIComponent("https://feeds.reuters.com/reuters/topNews"), type: "json" }
-];
+    // News API configuration - using NewsAPI.org for reliable results
+    const NEWS_API_KEY = 'demo'; // Using demo key for now
+    const NEWS_SOURCES = [
+        { id: 'bbc-news', name: 'BBC News', language: 'en' },
+        { id: 'cnn', name: 'CNN', language: 'en' },
+        { id: 'reuters', name: 'Reuters', language: 'en' },
+        { id: 'associated-press', name: 'Associated Press', language: 'en' },
+        { id: 'the-times-of-israel', name: 'Times of Israel', language: 'en' }
+    ];
 
-async function fetchNewsFromAPI(source) {
-  try {
-    console.log(`📡 Fetching from ${source.name}...`);
-    
-    const response = await fetch(source.url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'NewsAggregator/1.0'
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.status !== 'ok') {
-      throw new Error(`API Error: ${data.message || 'Unknown error'}`);
-    }
-    
-    const articles = data.items.map((item, idx) => ({
-      id: source.name.toLowerCase() + "_" + idx + "_" + Date.now(),
-      title: item.title || "",
-      url: item.link || "",
-      originalUrl: item.link || "",
-      source: source.name.toLowerCase(),
-      publishedAt: item.pubDate || new Date().toISOString(),
-      description: (item.description || item.content || "").replace(/<[^>]+>/g, "").slice(0, 200),
-      image: item.thumbnail || item.enclosure?.link || null,
-      needsImageFetch: !item.thumbnail && !item.enclosure?.link,
-      score: 0
-    }));
-    
-    console.log(`✅ ${source.name}: ${articles.length} articles`);
-    return articles;
-    
-  } catch (error) {
-    console.error(`❌ ${source.name} failed: ${error.message}`);
-    return [];
-  }
-}
-
-async function fetchNews() {
-  console.log("🚀 Starting news fetch...");
-  
-  const promises = RSS_SOURCES.map(source => fetchNewsFromAPI(source));
-  const results = await Promise.allSettled(promises);
-  
-  const allArticles = [];
-  let successCount = 0;
-  
-  results.forEach((result, index) => {
-    if (result.status === 'fulfilled' && result.value.length > 0) {
-      allArticles.push(...result.value);
-      successCount++;
-    }
-  });
-  
-  console.log(`📊 Fetched ${allArticles.length} articles from ${successCount}/${RSS_SOURCES.length} sources`);
-  
-  return allArticles;
-}
-
-function heVariants(q){
-  const set = new Set([q]);
-  if (q.includes("פיברומילאגיה")) set.add("פיברומיאלגיה");
-  set.add(q.replace(/ילאגיה/g,"יאלגיה"));
-  return Array.from(set).filter(Boolean);
-}
-function timeAgo(iso){
-  if(!iso) return "";
-  const parsed = Date.parse(iso);
-  if (isNaN(parsed)) return "";
-  const t = Date.now() - parsed;
-  const m = Math.max(0, Math.floor(t/60000));
-  if (m < 1) return "just now";
-  if (m < 60) return m+"m";
-  const h = Math.floor(m/60);
-  if (h < 24) return h+"h";
-  const d = Math.floor(h/24);
-  return d+"d";
-}
-function normalizeAndSort(arr, qForRelevance){
-  const list = [...arr];
-  const q = (qForRelevance||"").toLowerCase();
-  return list.sort((a,b)=>{
-    const inA = (a.title||"").toLowerCase().includes(q)?1:0;
-    const inB = (b.title||"").toLowerCase().includes(q)?1:0;
-    const tA = new Date(a.publishedAt||0).getTime();
-    const tB = new Date(b.publishedAt||0).getTime();
-    return (inB*2 + tB/1e13) - (inA*2 + tA/1e13);
-  });
-}
-async function proxyFetch(url){
-  // Use a more reliable proxy service that works better with GitHub Pages
-// Alternative working proxy services
-const PROXY_SERVICES = [
-  { 
-    name: "CORS-Proxy", 
-    url: (u) => `https://proxy.cors.sh/${u}`, 
-    headers: { 'x-cors-api-key': 'temp_public' },
-    emoji: "🌐" 
-  },
-  { 
-    name: "Proxy-CORS", 
-    url: (u) => `https://api.proxycors.com/?url=${encodeURIComponent(u)}`, 
-    emoji: "🔄" 
-  },
-  { 
-    name: "Heroku-Proxy", 
-    url: (u) => `https://safe-cors-anywhere.herokuapp.com/${u}`, 
-    emoji: "�" 
-  },
-  { 
-    name: "AllOrigins-Raw", 
-    url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, 
-    emoji: "�" 
-  }
-];
-
-async function proxyFetch(url, timeout = 12000) {
-  console.log(`� Starting fetch for: ${url}`);
-  
-  // Try direct fetch first for feeds that might allow CORS
-  try {
-    console.log(`🎯 Attempting direct fetch...`);
-    const directResponse = await fetch(url, {
-      headers: {
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-        'User-Agent': 'NewsAggregator/1.0'
-      },
-      signal: AbortSignal.timeout(8000)
-    });
-    
-    if (directResponse.ok) {
-      const text = await directResponse.text();
-      if (text && text.length > 50 && (text.includes('<rss') || text.includes('<feed') || text.includes('<item'))) {
-        console.log(`✅ Direct fetch succeeded: ${text.length} chars`);
-        return text;
-      }
-    }
-  } catch (e) {
-    console.log(`❌ Direct fetch failed: ${e.message}`);
-  }
-  
-  // Try proxy services
-  for (const proxy of PROXY_SERVICES) {
-    try {
-      console.log(`${proxy.emoji} Trying ${proxy.name}...`);
-      
-      const fetchOptions = {
-        signal: AbortSignal.timeout(timeout),
-        headers: {
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          ...(proxy.headers || {})
-        }
-      };
-      
-      const response = await fetch(proxy.url(url), fetchOptions);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const text = await response.text();
-      
-      // Validate RSS content
-      if (!text || text.length < 50) {
-        throw new Error(`Content too short: ${text.length} chars`);
-      }
-      
-      if (!text.includes('<rss') && !text.includes('<feed') && !text.includes('<item') && !text.includes('<entry')) {
-        throw new Error('Content does not appear to be RSS/XML');
-      }
-      
-      console.log(`✅ ${proxy.name} succeeded: ${text.length} chars`);
-      return text;
-      
-    } catch (error) {
-      console.log(`❌ ${proxy.name} failed: ${error.message}`);
-      continue;
-    }
-  }
-  
-  throw new Error('❌ All proxy services failed - RSS feed may be temporarily unavailable');
-}  for (const proxy of proxies) {
-    try {
-      console.log(`🔄 Trying ${proxy.name} for ${url}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout
-      
-      const response = await fetch(proxy.url, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-          'User-Agent': 'Mozilla/5.0 (compatible; NewsReader/1.0)'
-        }
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const text = await proxy.parseResponse(response);
-      
-      // Validate we got RSS content
-      if (text && text.length > 200 && (text.includes('<rss') || text.includes('<feed') || text.includes('<?xml'))) {
-        console.log(`✅ Successfully fetched via ${proxy.name}`);
-        return text;
-      } else {
-        throw new Error(`Invalid RSS content from ${proxy.name}`);
-      }
-      
-    } catch (error) {
-      console.log(`❌ ${proxy.name} failed: ${error.message}`);
-      continue;
-    }
-  }
-  
-  throw new Error('All proxy services failed');
-}
-async function fetchRSS(url){
-  console.log(`� Fetching RSS from: ${new URL(url).hostname}`);
-  
-  try {
-    const xmlText = await proxyFetch(url);
-    
-    // Clean up the XML text to handle encoding and entity issues
-    const cleanXml = xmlText
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Remove invalid XML characters
-      .replace(/&(?!(?:amp|lt|gt|quot|apos);)/g, '&amp;') // Fix unescaped ampersands
-      .replace(/^\s*<\?xml[^>]*\?>\s*/, '') // Remove XML declaration if present
-      .trim();
-    
-    // Try to parse as XML
-    const xml = new DOMParser().parseFromString(`<?xml version="1.0" encoding="UTF-8"?>${cleanXml}`, "application/xml");
-    const parseError = xml.querySelector('parsererror');
-    
-    if (parseError) {
-      console.warn(`⚠️ XML parse error for ${url}, trying as HTML...`);
-      // Try parsing as HTML in case it's not proper XML
-      const htmlDoc = new DOMParser().parseFromString(cleanXml, "text/html");
-      const items = Array.from(htmlDoc.querySelectorAll("item, entry"));
-      if (items.length === 0) {
-        throw new Error("No RSS items found in feed");
-      }
-      const results = parseRSSItems(htmlDoc, url);
-      console.log(`✅ Parsed ${results.length} items from ${new URL(url).hostname} (HTML fallback)`);
-      return results;
-    }
-    
-    const results = parseRSSItems(xml, url);
-    console.log(`✅ Parsed ${results.length} items from ${new URL(url).hostname}`);
-    return results;
-    
-  } catch (error) {
-    console.error(`❌ Failed to fetch RSS from ${new URL(url).hostname}:`, error.message);
-    return [];
-  }
-}
-
-function parseRSSItems(doc, url) {
-  const sourceDomain = new URL(url).hostname.replace(/^www\./, "");
-  
-  const items = Array.from(doc.querySelectorAll("item, entry")).map((it,idx)=>{
-    const title = it.querySelector("title")?.textContent?.trim() || "";
-    let link = it.querySelector("link")?.getAttribute("href") || it.querySelector("link")?.textContent || "";
-    const pubDate = it.querySelector("pubDate")?.textContent || it.querySelector("updated")?.textContent || "";
-    const description = it.querySelector("description")?.textContent || it.querySelector("summary")?.textContent || "";
-    const source = sourceDomain;
-    
-    // Try to get image from RSS feed with domain validation
-    let rssImage = it.querySelector("enclosure[type^='image']")?.getAttribute("url") ||
-                   it.querySelector("media\\:thumbnail, thumbnail")?.getAttribute("url") ||
-                   it.querySelector("media\\:content[medium='image'], content[medium='image']")?.getAttribute("url");
-    
-    // Validate RSS image domain
-    if (rssImage) {
-      try {
-        const imageUrl = new URL(rssImage);
-        const imageDomain = imageUrl.hostname;
-        const isSameDomain = imageDomain === sourceDomain || imageDomain.includes(sourceDomain);
-        const isTrustedCDN = imageDomain.includes('cloudfront.net') || 
-                           imageDomain.includes('cloudinary.com') ||
-                           imageDomain.includes('images.') ||
-                           imageDomain.includes('static.') ||
-                           imageDomain.includes('cdn.') ||
-                           imageDomain.includes('media.');
-        
-        if (!isSameDomain && !isTrustedCDN) {
-          console.log(`🚫 RSS: Blocked image from untrusted domain: ${imageDomain} for source ${sourceDomain}`);
-          rssImage = null;
-        }
-      } catch (e) {
-        rssImage = null;
-      }
-    }
-    
-    try{
-      const base = new URL(url);
-      if (link) {
-        link = new URL(link, base).toString();
-        const u = new URL(link);
-        if (u.hostname.includes("google.") && (u.searchParams.get("q")||u.searchParams.get("url"))) {
-          link = u.searchParams.get("q") || u.searchParams.get("url");
-        }
-      }
-    }catch(_){ }
-    
-    return {
-      id: source+"_"+idx+"_"+(link||title).slice(0,40),
-      title, url: link, originalUrl: link, source,
-      publishedAt: (()=>{ if (!pubDate) return new Date().toISOString(); const d = new Date(pubDate); return isNaN(d) ? new Date().toISOString() : d.toISOString(); })(),
-      description: (description||"").replace(/<[^>]+>/g,""),
-      image: rssImage, // Use validated RSS image if available
-      needsImageFetch: !rssImage, score: 0
-    };
-  });
-  return items;
-}
-async function getOriginalArticleData(targetUrl){
-  if (!/^https?:\/\//.test(targetUrl)) return null;
-  try{
-    const html = await proxyFetch(targetUrl);
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    
-    // Extract domain from the original article URL
-    const articleDomain = new URL(targetUrl).hostname;
-    
-    let image = doc.querySelector('meta[property="og:image"]')?.getAttribute('content')
-              || doc.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
-    
-    if (!image){
-      const img = doc.querySelector("article img, .article img, .content img, .post img, img");
-      if (img){
-        image = img.getAttribute("src") || img.getAttribute("data-src");
-      }
-    }
-    
-    // Validate and fix image URL
-    if (image) {
-      try {
-        // If relative URL, make it absolute using the article's domain
-        if (!/^https?:\/\//.test(image)) {
-          const base = new URL(targetUrl);
-          image = new URL(image, base.origin).toString();
-        }
-        
-        // Ensure image is from the same domain or trusted CDN
-        const imageUrl = new URL(image);
-        const imageDomain = imageUrl.hostname;
-        
-        // Only allow images from the same domain or well-known CDNs
-        const isSameDomain = imageDomain === articleDomain || imageDomain.includes(articleDomain.replace('www.', ''));
-        const isTrustedCDN = imageDomain.includes('cloudfront.net') || 
-                           imageDomain.includes('cloudinary.com') ||
-                           imageDomain.includes('imgur.com') ||
-                           imageDomain.includes('images.') ||
-                           imageDomain.includes('static.') ||
-                           imageDomain.includes('cdn.') ||
-                           imageDomain.includes('media.');
-        
-        if (!isSameDomain && !isTrustedCDN) {
-          console.log(`🚫 Blocked image from untrusted domain: ${imageDomain} for article from ${articleDomain}`);
-          image = null;
-        }
-        
-        // Validate image file extension
-        if (image && !/(\.jpg|\.jpeg|\.png|\.webp|\.gif)(\?|$)/i.test(image)) {
-          console.log(`🚫 Invalid image format for: ${image}`);
-          image = null;
-        }
-        
-      } catch (e) {
-        console.log(`🚫 Invalid image URL: ${image}`);
-        image = null;
-      }
-    }
-    
-    const enhancedTitle = doc.querySelector("meta[property='og:title']")?.content || "";
-    const enhancedDescription = doc.querySelector("meta[property='og:description']")?.content
-                             || doc.querySelector("meta[name='description']")?.content || "";
-    
-    return { image, enhancedTitle, enhancedDescription };
-  }catch(e){
-    console.error(`❌ Failed to fetch article data from ${targetUrl}:`, e.message);
-    return null;
-  }
-}
-
-function App(){
-  const [topic, setTopic] = useState(localStorage.getItem("news_last_topic") || "");
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [scan, setScan] = useState({attempted:0, succeeded:0});
-
-  React.useEffect(()=>{ localStorage.setItem("news_last_topic", topic); }, [topic]);
-
-  async function fetchNews(q){
-    setLoading(true); 
-    setArticles([]);
-    setError("");
-    
-    try {
-      console.log(`🔍 Searching for: "${q}"`);
-      
-      const allArticles = await fetchNewsFromAllSources();
-      
-      if (allArticles.length === 0) {
-        setError("No articles found from any news sources. Please try again later.");
-        setLoading(false);
-        return;
-      }
-      
-      // Filter articles based on search topic
-      const searchTerms = heVariants(q.toLowerCase());
-      const filtered = allArticles.filter(article => {
-        if (!q || q.trim() === '') return true;
-        const text = (article.title + " " + article.description).toLowerCase();
-        return searchTerms.some(term => text.includes(term));
-      });
-      
-      console.log(`🎯 Found ${filtered.length} articles matching "${q}"`);
-      
-      // Sort by relevance and date
-      const sorted = normalizeAndSort(filtered, q);
-      const finalResults = sorted.slice(0, 20); // Limit to 20 results
-      
-      setArticles(finalResults);
-      setScan({attempted: RSS_SOURCES.length, succeeded: allArticles.length > 0 ? RSS_SOURCES.length : 0});
-      
-      // Fetch images for articles that need them
-      if (finalResults.length > 0) {
-        setTimeout(() => {
-          finalResults.slice(0, 8).forEach(async (article, idx) => {
-            if (article.needsImageFetch && article.url) {
-              try {
-                const enhanced = await getOriginalArticleData(article.url);
-                if (enhanced?.image) {
-                  setArticles(prev => prev.map(a => 
-                    a.id === article.id ? {...a, image: enhanced.image, needsImageFetch: false} : a
-                  ));
-                }
-              } catch (e) {
-                // Ignore image fetch errors
-              }
-            }
-          });
-        }, 500);
-      }
-      
-    } catch (err) {
-      console.error("Search error:", err);
-      setError("Failed to search news sources: " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function fetchNewsFromAllSources() {
-    console.log("🚀 Starting news fetch from all sources...");
-    
-    const promises = RSS_SOURCES.map(source => fetchNewsFromAPI(source));
-    const results = await Promise.allSettled(promises);
-    
-    const allArticles = [];
-    let successCount = 0;
-    
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled' && result.value.length > 0) {
-        allArticles.push(...result.value);
-        successCount++;
-      }
-    });
-    
-    console.log(`📊 Fetched ${allArticles.length} articles from ${successCount}/${RSS_SOURCES.length} sources`);
-    setScan({attempted: RSS_SOURCES.length, succeeded: successCount});
-    
-    return allArticles;
-  }
-
-  return React.createElement('div', {className:'container'},
-    React.createElement('div', {className:'header'},
-      React.createElement('h1', {style:{margin:0}}, 'Topic News Aggregator'),
-      React.createElement('div', null,
-        React.createElement('span', {className:'pill'}, `Sources scanned: ${scan.succeeded}/${scan.attempted}`),
-        React.createElement('span', {className:'pill'}, 'Israel: Hebrew RSS'),
-        React.createElement('span', {className:'pill'}, 'US: English RSS'),
-        React.createElement('span', {className:'pill'}, 'No Google News')
-      )
-    ),
-    React.createElement('div', {className:'search'},
-      React.createElement('input', {
-        value: topic, placeholder:'Search a topic to see results.',
-        onChange: e=>setTopic(e.target.value),
-        onKeyDown: e=>{ if (e.key==='Enter') fetchNews(topic); }
-      }),
-      React.createElement('button', {className:'btn', onClick: ()=>fetchNews(topic), disabled:loading}, loading?'Loading…':'Search'),
-      React.createElement('button', {className:'btn', style:{background:'#334155'}, onClick: ()=>{setTopic(''); setArticles([]); setError('');} }, 'Clear')
-    ),
-    error ? React.createElement('div', {className:'error', style:{background:'rgba(239,68,68,0.1)', color:'#dc2626', padding:'12px', borderRadius:'8px', margin:'12px 0'}}, error) : null,
-    articles.length===0 && !loading && !error ? React.createElement('div', {className:'empty'}, 'Search for a topic to see results.') : null,
-    React.createElement('div', {className:'grid'},
-      articles.map(a=>
-        React.createElement('a', {
-          key: a.id,
-          href: a.url || '#',
-          target: '_blank',
-          rel: 'noopener noreferrer',
-          style: { textDecoration: 'none', color: 'inherit' }
+    // Alternative RSS-to-JSON sources for better coverage
+    const RSS_SOURCES = [
+        {
+            name: 'BBC World',
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.bbci.co.uk%2Fnews%2Fworld%2Frss.xml'
         },
-          React.createElement('article', null,
-            // Only show image if one exists from content
-            a.image ? React.createElement('img', {
-              src: a.image, 
-              alt: '',
-              style: { objectFit: 'cover', width: '100%', height: '180px' }
-            }) : null,
-            React.createElement('div', {className:'pad'},
-              React.createElement('div', {className:'meta'},
-                React.createElement('span', {className:'src'}, a.source),
-                React.createElement('span', null, timeAgo(a.publishedAt))
-              ),
-              React.createElement('h3', {style:{margin:'8px 0 6px',fontSize:18,color:'#111827'}}, a.enhancedTitle || a.title),
-              a.description ? React.createElement('p', {style:{margin:0,color:'#334155'}}, a.enhancedDescription || a.description) : null
-            )
-          )
-        )
-      )
-    )
-  );
-}
+        {
+            name: 'CNN Top Stories', 
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Frss.cnn.com%2Frss%2Fedition.rss'
+        },
+        {
+            name: 'Reuters',
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.reuters.com%2Freuters%2FtopNews'
+        },
+        {
+            name: 'Times of Israel',
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.timesofisrael.com%2Ffeed%2F'
+        },
+        {
+            name: 'Jerusalem Post',
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.jpost.com%2Frss%2Frssfeedsfrontpage.aspx'
+        }
+    ];
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    // Utility functions
+    function extractImageFromContent(content) {
+        if (!content) return null;
+        
+        // Extract image from HTML content
+        const imgMatch = content.match(/<img[^>]+src="([^"]+)"/i);
+        if (imgMatch) {
+            return imgMatch[1];
+        }
+        
+        // Look for common image patterns
+        const urlMatch = content.match(/(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp))/i);
+        if (urlMatch) {
+            return urlMatch[1];
+        }
+        
+        return null;
+    }
+
+    function isValidImageUrl(url) {
+        if (!url) return false;
+        try {
+            new URL(url);
+            return /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url);
+        } catch {
+            return false;
+        }
+    }
+
+    function timeAgo(dateString) {
+        if (!dateString) return '';
+        
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return '';
+        
+        const now = new Date();
+        const diffMs = now - date;
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffHours / 24);
+        
+        if (diffHours < 1) return 'Just now';
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        
+        return date.toLocaleDateString();
+    }
+
+    function scoreRelevance(article, searchTerm) {
+        if (!searchTerm) return 0;
+        
+        const term = searchTerm.toLowerCase();
+        const title = (article.title || '').toLowerCase();
+        const description = (article.description || '').toLowerCase();
+        
+        let score = 0;
+        
+        // Title matches are worth more
+        if (title.includes(term)) score += 10;
+        if (description.includes(term)) score += 5;
+        
+        // Recent articles get slight boost
+        const hoursOld = (Date.now() - new Date(article.publishedAt)) / (1000 * 60 * 60);
+        if (hoursOld < 24) score += 2;
+        
+        return score;
+    }
+
+    // API functions
+    async function fetchFromRSSSource(source) {
+        try {
+            console.log(`🔄 Fetching ${source.name}...`);
+            
+            const response = await fetch(source.url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.status !== 'ok') {
+                console.warn(`⚠️ ${source.name}: ${data.message || 'API error'}`);
+                return [];
+            }
+            
+            const articles = (data.items || []).map((item, index) => {
+                let image = item.thumbnail || 
+                           item.enclosure?.link || 
+                           extractImageFromContent(item.content || item.description);
+                           
+                if (!isValidImageUrl(image)) {
+                    image = null;
+                }
+                
+                return {
+                    id: `${source.name.toLowerCase().replace(/\s+/g, '-')}-${index}-${Date.now()}`,
+                    title: item.title || '',
+                    description: (item.description || item.content || '').replace(/<[^>]*>/g, '').trim().slice(0, 200),
+                    url: item.link || '',
+                    image: image,
+                    publishedAt: item.pubDate || new Date().toISOString(),
+                    source: source.name,
+                    score: 0
+                };
+            }).filter(article => article.title && article.url);
+            
+            console.log(`✅ ${source.name}: ${articles.length} articles`);
+            return articles;
+            
+        } catch (error) {
+            console.error(`❌ ${source.name} failed:`, error.message);
+            return [];
+        }
+    }
+
+    async function fetchAllNews() {
+        console.log('🚀 Starting news fetch...');
+        
+        const fetchPromises = RSS_SOURCES.map(source => fetchFromRSSSource(source));
+        const results = await Promise.allSettled(fetchPromises);
+        
+        const allArticles = [];
+        let successCount = 0;
+        
+        results.forEach((result, index) => {
+            if (result.status === 'fulfilled' && result.value.length > 0) {
+                allArticles.push(...result.value);
+                successCount++;
+            }
+        });
+        
+        // Remove duplicates based on title similarity
+        const uniqueArticles = [];
+        const seenTitles = new Set();
+        
+        for (const article of allArticles) {
+            const titleKey = article.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+            if (!seenTitles.has(titleKey)) {
+                seenTitles.add(titleKey);
+                uniqueArticles.push(article);
+            }
+        }
+        
+        console.log(`📊 Total: ${uniqueArticles.length} unique articles from ${successCount}/${RSS_SOURCES.length} sources`);
+        return uniqueArticles;
+    }
+
+    // React components
+    function LoadingSpinner() {
+        return h('div', { 
+            style: { 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                padding: '40px',
+                color: '#fff'
+            } 
+        }, '🔄 Loading news...');
+    }
+
+    function ErrorMessage({ message }) {
+        return h('div', {
+            style: {
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '12px',
+                padding: '16px',
+                margin: '16px 0',
+                color: '#fff'
+            }
+        }, `❌ ${message}`);
+    }
+
+    function StatusBar({ attempted, succeeded, totalArticles }) {
+        return h('div', {
+            style: {
+                display: 'flex',
+                gap: '12px',
+                flexWrap: 'wrap',
+                marginBottom: '20px'
+            }
+        }, [
+            h('span', { 
+                key: 'sources',
+                className: 'pill',
+                style: { background: 'rgba(34, 197, 94, 0.2)', border: '1px solid rgba(34, 197, 94, 0.3)' }
+            }, `Sources: ${succeeded}/${attempted}`),
+            h('span', { 
+                key: 'articles',
+                className: 'pill',
+                style: { background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.3)' }
+            }, `Articles: ${totalArticles}`),
+            h('span', { 
+                key: 'updated',
+                className: 'pill' 
+            }, `Updated: ${new Date().toLocaleTimeString()}`)
+        ]);
+    }
+
+    function ArticleCard({ article }) {
+        const [imageError, setImageError] = useState(false);
+        
+        return h('article', {
+            style: {
+                borderRadius: '16px',
+                overflow: 'hidden',
+                background: '#fff',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                transition: 'transform 0.2s, box-shadow 0.2s',
+                cursor: 'pointer',
+                ':hover': {
+                    transform: 'translateY(-4px)',
+                    boxShadow: '0 8px 20px rgba(0,0,0,0.25)'
+                }
+            },
+            onClick: () => window.open(article.url, '_blank')
+        }, [
+            // Image section
+            article.image && !imageError ? h('img', {
+                key: 'image',
+                src: article.image,
+                alt: article.title,
+                style: {
+                    width: '100%',
+                    height: '200px',
+                    objectFit: 'cover',
+                    display: 'block'
+                },
+                onError: () => setImageError(true)
+            }) : h('div', {
+                key: 'placeholder',
+                style: {
+                    width: '100%',
+                    height: '200px',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '48px'
+                }
+            }, '📰'),
+            
+            // Content section
+            h('div', {
+                key: 'content',
+                style: { padding: '16px' }
+            }, [
+                // Metadata
+                h('div', {
+                    key: 'meta',
+                    style: {
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginBottom: '12px',
+                        fontSize: '12px',
+                        color: '#64748b'
+                    }
+                }, [
+                    h('span', {
+                        key: 'source',
+                        style: {
+                            background: '#e2e8f0',
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            fontWeight: '600',
+                            color: '#1e293b'
+                        }
+                    }, article.source),
+                    h('span', { key: 'time' }, timeAgo(article.publishedAt))
+                ]),
+                
+                // Title
+                h('h3', {
+                    key: 'title',
+                    style: {
+                        margin: '0 0 8px 0',
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        lineHeight: '1.4',
+                        color: '#1e293b'
+                    }
+                }, article.title),
+                
+                // Description
+                h('p', {
+                    key: 'description',
+                    style: {
+                        margin: 0,
+                        fontSize: '14px',
+                        lineHeight: '1.5',
+                        color: '#64748b'
+                    }
+                }, article.description)
+            ])
+        ]);
+    }
+
+    function SearchBar({ value, onChange, onSearch, loading }) {
+        return h('div', {
+            style: {
+                display: 'flex',
+                gap: '12px',
+                margin: '20px 0',
+                flexWrap: 'wrap'
+            }
+        }, [
+            h('input', {
+                key: 'search',
+                type: 'text',
+                value: value,
+                onChange: (e) => onChange(e.target.value),
+                onKeyPress: (e) => e.key === 'Enter' && onSearch(),
+                placeholder: 'Search news (e.g., "maale adumim", "israel", "technology")...',
+                style: {
+                    flex: '1',
+                    minWidth: '300px',
+                    padding: '16px',
+                    fontSize: '16px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    outline: 'none',
+                    background: '#fff',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                }
+            }),
+            h('button', {
+                key: 'search-btn',
+                onClick: onSearch,
+                disabled: loading,
+                style: {
+                    padding: '16px 24px',
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    color: '#fff',
+                    background: loading ? '#9ca3af' : '#10b981',
+                    border: 'none',
+                    borderRadius: '12px',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    transition: 'background 0.2s'
+                }
+            }, loading ? 'Searching...' : 'Search'),
+            h('button', {
+                key: 'clear-btn',
+                onClick: () => onChange(''),
+                style: {
+                    padding: '16px 24px',
+                    fontSize: '16px',
+                    fontWeight: '600',
+                    color: '#6b7280',
+                    background: '#fff',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '12px',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                    transition: 'all 0.2s'
+                }
+            }, 'Clear')
+        ]);
+    }
+
+    function App() {
+        const [searchTerm, setSearchTerm] = useState(() => 
+            localStorage.getItem('news-search-term') || ''
+        );
+        const [articles, setArticles] = useState([]);
+        const [filteredArticles, setFilteredArticles] = useState([]);
+        const [loading, setLoading] = useState(false);
+        const [error, setError] = useState('');
+        const [stats, setStats] = useState({ attempted: 0, succeeded: 0, total: 0 });
+
+        // Save search term to localStorage
+        useEffect(() => {
+            localStorage.setItem('news-search-term', searchTerm);
+        }, [searchTerm]);
+
+        // Filter articles when search term or articles change
+        useEffect(() => {
+            if (!searchTerm.trim()) {
+                setFilteredArticles(articles.slice(0, 20)); // Show recent articles
+                return;
+            }
+
+            const term = searchTerm.toLowerCase().trim();
+            const filtered = articles.filter(article => {
+                const title = article.title.toLowerCase();
+                const description = article.description.toLowerCase();
+                return title.includes(term) || description.includes(term);
+            });
+
+            // Score and sort by relevance
+            const scored = filtered.map(article => ({
+                ...article,
+                score: scoreRelevance(article, term)
+            })).sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return new Date(b.publishedAt) - new Date(a.publishedAt);
+            });
+
+            setFilteredArticles(scored.slice(0, 20));
+        }, [articles, searchTerm]);
+
+        async function handleSearch() {
+            setLoading(true);
+            setError('');
+            
+            try {
+                const allArticles = await fetchAllNews();
+                setArticles(allArticles);
+                setStats({
+                    attempted: RSS_SOURCES.length,
+                    succeeded: allArticles.length > 0 ? RSS_SOURCES.length : 0,
+                    total: allArticles.length
+                });
+                
+                if (allArticles.length === 0) {
+                    setError('No articles found. Please try again later.');
+                }
+            } catch (err) {
+                console.error('Search error:', err);
+                setError('Failed to fetch news. Please check your connection and try again.');
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Initial load
+        useEffect(() => {
+            if (!articles.length) {
+                handleSearch();
+            }
+        }, []);
+
+        return h('div', {
+            style: {
+                minHeight: '100vh',
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                color: '#fff'
+            }
+        }, [
+            h('div', {
+                key: 'container',
+                style: {
+                    maxWidth: '1200px',
+                    margin: '0 auto',
+                    padding: '24px'
+                }
+            }, [
+                // Header
+                h('div', {
+                    key: 'header',
+                    style: { textAlign: 'center', marginBottom: '32px' }
+                }, [
+                    h('h1', {
+                        key: 'title',
+                        style: {
+                            fontSize: '2.5rem',
+                            fontWeight: 'bold',
+                            margin: '0 0 8px 0',
+                            textShadow: '0 2px 4px rgba(0,0,0,0.3)'
+                        }
+                    }, '📰 News Aggregator'),
+                    h('p', {
+                        key: 'subtitle',
+                        style: {
+                            fontSize: '1.1rem',
+                            opacity: 0.9,
+                            margin: 0
+                        }
+                    }, 'Search and discover relevant news from trusted sources')
+                ]),
+
+                // Search bar
+                h(SearchBar, {
+                    key: 'search',
+                    value: searchTerm,
+                    onChange: setSearchTerm,
+                    onSearch: handleSearch,
+                    loading: loading
+                }),
+
+                // Status bar
+                stats.attempted > 0 && h(StatusBar, {
+                    key: 'status',
+                    attempted: stats.attempted,
+                    succeeded: stats.succeeded,
+                    totalArticles: stats.total
+                }),
+
+                // Error message
+                error && h(ErrorMessage, {
+                    key: 'error',
+                    message: error
+                }),
+
+                // Loading spinner
+                loading && h(LoadingSpinner, { key: 'loading' }),
+
+                // Results summary
+                !loading && filteredArticles.length > 0 && h('div', {
+                    key: 'summary',
+                    style: {
+                        textAlign: 'center',
+                        margin: '20px 0',
+                        fontSize: '1.1rem',
+                        opacity: 0.9
+                    }
+                }, searchTerm.trim() ? 
+                    `Found ${filteredArticles.length} articles about "${searchTerm}"` :
+                    `Showing ${filteredArticles.length} recent articles`
+                ),
+
+                // No results message
+                !loading && !error && filteredArticles.length === 0 && searchTerm.trim() && h('div', {
+                    key: 'no-results',
+                    style: {
+                        textAlign: 'center',
+                        padding: '40px',
+                        background: 'rgba(255,255,255,0.1)',
+                        borderRadius: '16px',
+                        margin: '20px 0'
+                    }
+                }, [
+                    h('div', { key: 'icon', style: { fontSize: '3rem', marginBottom: '16px' } }, '🔍'),
+                    h('h3', { key: 'title', style: { margin: '0 0 8px 0' } }, 'No results found'),
+                    h('p', { key: 'text', style: { margin: 0, opacity: 0.8 } }, 
+                        `No articles found for "${searchTerm}". Try a different search term.`)
+                ]),
+
+                // Articles grid
+                !loading && filteredArticles.length > 0 && h('div', {
+                    key: 'grid',
+                    style: {
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                        gap: '24px',
+                        marginTop: '24px'
+                    }
+                }, filteredArticles.map(article => 
+                    h(ArticleCard, { 
+                        key: article.id, 
+                        article: article 
+                    })
+                ))
+            ])
+        ]);
+    }
+
+    // Render the app
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(h(App));
 })();
