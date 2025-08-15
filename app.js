@@ -255,14 +255,53 @@
     }
 
     // API functions
+    
     async function fetchFromRSSSource(source) {
         try {
-            console.log(`🔄 Fetching ${source.name}...`);
+            const proxied = `/api/proxy?url=${encodeURIComponent(source.url)}`;
+            const resp = await fetch(proxied, { headers: { 'Accept': 'application/rss+xml, text/xml, text/plain' } });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const text = await resp.text();
             
-            const response = await fetch(source.url);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
+            // Parse RSS XML
+            const parser = new DOMParser();
+            const xml = parser.parseFromString(text, 'text/xml');
+            const items = Array.from(xml.querySelectorAll('item'));
+            const articles = items.map((item, index) => {
+                const title = item.querySelector('title')?.textContent?.trim() || '';
+                const link = item.querySelector('link')?.textContent?.trim() || '';
+                const descriptionRaw = item.querySelector('description')?.textContent || '';
+                const description = descriptionRaw.replace(/<[^>]*>/g, '').trim().slice(0, 200);
+                const pubDate = item.querySelector('pubDate')?.textContent || new Date().toUTCString();
+
+                // Image extraction: media:content, enclosure, img in description
+                let image = item.querySelector('media\:content, content')?.getAttribute('url')
+                           || item.querySelector('enclosure')?.getAttribute('url')
+                           || (/src=['"]([^'"]+\.(?:jpg|jpeg|png|webp|gif))['"]/i.exec(descriptionRaw) || [])[1]
+                           || null;
+
+                // Validate absolute URL
+                const isValidImageUrl = (u) => !!u && /^(https?:)?\/\//i.test(u) && /\.(jpg|jpeg|png|webp|gif)(\?|#|$)/i.test(u);
+                if (!isValidImageUrl(image)) image = null;
+
+                return {
+                    id: `${source.name.toLowerCase().replace(/\s+/g, '-')}-${index}-${Date.now()}`,
+                    title, description,
+                    url: link,
+                    image,
+                    publishedAt: pubDate,
+                    source: source.name,
+                    score: 0
+                };
+            }).filter(a => a.title && a.url);
+
+            console.log(`✅ ${source.name}: ${articles.length} articles`);
+            return articles;
+        } catch (err) {
+            console.error(`❌ ${source.name}: ${err.message}`);
+            return [];
+        }
+    }
             
             const data = await response.json();
             
@@ -321,16 +360,22 @@
     }
 
     async function fetchAllNews() {
+        const 
         const sources = [
-            { name: 'BBC News', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://feeds.bbci.co.uk/news/rss.xml' },
-            { name: 'Reuters', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://feeds.reuters.com/reuters/topNews' },
-            { name: 'CNN', url: 'https://api.rss2json.com/v1/api.json?rss_url=http://rss.cnn.com/rss/edition.rss' },
-            { name: 'Associated Press', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://feeds.washingtonpost.com/rss/world' },
-            { name: 'NPR News', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://feeds.npr.org/1001/rss.xml' },
-            { name: 'Ynet', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://www.ynet.co.il/Integration/StoryRss2.xml' },
-            { name: 'Walla', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://rss.walla.co.il/feed/1?type=main' },
-            { name: 'Israel Hayom', url: 'https://api.rss2json.com/v1/api.json?rss_url=https://www.israelhayom.co.il/rss' }
+            // English
+            { name: 'BBC News', url: 'https://feeds.bbci.co.uk/news/rss.xml' },
+            { name: 'Reuters', url: 'https://feeds.reuters.com/reuters/topNews' },
+            { name: 'CNN', url: 'http://rss.cnn.com/rss/edition.rss' },
+            { name: 'AP News', url: 'https://apnews.com/apf-topnews?output=rss' },
+            { name: 'The Guardian', url: 'https://www.theguardian.com/world/rss' },
+            // Israel (Hebrew)
+            { name: 'Ynet', url: 'https://www.ynet.co.il/Integration/StoryRss2.xml' },
+            { name: 'Walla', url: 'https://rss.walla.co.il/feed/1?type=main' },
+            { name: 'Israel Hayom', url: 'https://www.israelhayom.co.il/rss' },
+            { name: 'Haaretz (Heb)', url: 'https://www.haaretz.co.il/cmlink/1.1470869' },
+            { name: 'Globes', url: 'https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=1225' }
         ];
+
 
         const promises = sources.map(source => fetchFromRSSSource(source));
         const results = await Promise.all(promises);
