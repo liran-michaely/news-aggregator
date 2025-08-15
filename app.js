@@ -109,16 +109,27 @@
         if (!searchTerm) return 0;
         
         const terms = getSearchVariants(searchTerm);
-        const title = (article.title || '').toLowerCase();
-        const description = (article.description || '').toLowerCase();
+        const title = article.title || '';
+        const description = article.description || '';
         
         let score = 0;
         
         // Check all term variants
         for (const term of terms) {
-            // Title matches are worth more
-            if (title.includes(term)) score += 10;
-            if (description.includes(term)) score += 5;
+            const isHebrew = /[\u0590-\u05FF]/.test(term);
+            
+            if (isHebrew) {
+                // For Hebrew, check exact matches
+                if (title.includes(term)) score += 10;
+                if (description.includes(term)) score += 5;
+            } else {
+                // For English, use case-insensitive matching
+                const lowerTitle = title.toLowerCase();
+                const lowerDescription = description.toLowerCase();
+                const lowerTerm = term.toLowerCase();
+                if (lowerTitle.includes(lowerTerm)) score += 10;
+                if (lowerDescription.includes(lowerTerm)) score += 5;
+            }
         }
         
         // Recent articles get slight boost
@@ -176,7 +187,24 @@
             'התנחלות': ['settlement'],
             'מתנחל': ['settler'],
             'פיברומיאלגיה': ['fibromyalgia'],
-            'פיברומילאגיה': ['fibromyalgia']
+            'פיברומילאגיה': ['fibromyalgia'],
+            'מורפים': ['morphine', 'opioids', 'painkillers', 'narcotics', 'opiates'],
+            'מורפין': ['morphine', 'opioids', 'painkillers', 'narcotics'],
+            'כאב': ['pain'],
+            'כאבים': ['pain', 'pains'],
+            'רפואה': ['medicine', 'medical'],
+            'בריאות': ['health'],
+            'תרופות': ['medication', 'drugs', 'medicine'],
+            'תרופה': ['medication', 'drug', 'medicine'],
+            'חולים': ['patients', 'sick'],
+            'בית חולים': ['hospital'],
+            'רופא': ['doctor', 'physician'],
+            'אחות': ['nurse'],
+            'טיפול': ['treatment', 'therapy'],
+            'מחלה': ['disease', 'illness'],
+            'וירוס': ['virus'],
+            'קורונה': ['corona', 'covid'],
+            'חיסון': ['vaccine', 'vaccination']
         };
         
         // English to Hebrew transliterations
@@ -197,28 +225,60 @@
             'west bank': ['גדה מערבית', 'יהודה ושומרון'],
             'settlement': ['התנחלות'],
             'settler': ['מתנחל'],
-            'fibromyalgia': ['פיברומיאלגיה', 'פיברומילאגיה']
+            'fibromyalgia': ['פיברומיאלגיה', 'פיברומילאגיה'],
+            'morphine': ['מורפים', 'מורפין'],
+            'opioids': ['מורפים', 'אופיואידים'],
+            'opiates': ['מורפים'],
+            'painkillers': ['משכני כאבים', 'מורפים'],
+            'narcotics': ['סמים', 'מורפים'],
+            'pain': ['כאב', 'כאבים'],
+            'medicine': ['רפואה', 'תרופות'],
+            'medical': ['רפואי', 'רפואה'],
+            'health': ['בריאות'],
+            'medication': ['תרופות', 'תרופה'],
+            'drugs': ['תרופות', 'סמים'],
+            'patients': ['חולים'],
+            'sick': ['חולים'],
+            'hospital': ['בית חולים'],
+            'doctor': ['רופא'],
+            'physician': ['רופא'],
+            'nurse': ['אחות'],
+            'treatment': ['טיפול'],
+            'therapy': ['טיפול'],
+            'disease': ['מחלה'],
+            'illness': ['מחלה'],
+            'virus': ['וירוס'],
+            'corona': ['קורונה'],
+            'covid': ['קורונה'],
+            'vaccine': ['חיסון'],
+            'vaccination': ['חיסון']
         };
         
+        const originalTerm = searchTerm.trim();
+        const lowerTerm = originalTerm.toLowerCase();
+        
         // Add Hebrew variants if searching in Hebrew
-        if (hebrewToEnglish[term]) {
-            hebrewToEnglish[term].forEach(variant => variants.add(variant));
+        if (hebrewToEnglish[originalTerm]) {
+            hebrewToEnglish[originalTerm].forEach(variant => variants.add(variant));
         }
         
         // Add English variants if searching in English
-        if (englishToHebrew[term]) {
-            englishToHebrew[term].forEach(variant => variants.add(variant));
+        if (englishToHebrew[lowerTerm]) {
+            englishToHebrew[lowerTerm].forEach(variant => variants.add(variant));
         }
         
         // Handle partial matches for compound terms
-        const words = term.split(/\s+/);
+        const words = originalTerm.split(/\s+/);
         if (words.length > 1) {
             words.forEach(word => {
-                if (hebrewToEnglish[word]) {
-                    hebrewToEnglish[word].forEach(variant => variants.add(variant));
+                const trimmedWord = word.trim();
+                const lowerWord = word.toLowerCase().trim();
+                
+                if (hebrewToEnglish[trimmedWord]) {
+                    hebrewToEnglish[trimmedWord].forEach(variant => variants.add(variant));
                 }
-                if (englishToHebrew[word]) {
-                    englishToHebrew[word].forEach(variant => variants.add(variant));
+                if (englishToHebrew[lowerWord]) {
+                    englishToHebrew[lowerWord].forEach(variant => variants.add(variant));
                 }
             });
         }
@@ -544,17 +604,29 @@
 
             const searchVariants = getSearchVariants(searchTerm);
             const filtered = articles.filter(article => {
-                const title = article.title.toLowerCase();
-                const description = article.description.toLowerCase();
+                // Get text content for searching - handle both Hebrew and English
+                const title = article.title || '';
+                const description = article.description || '';
                 
-                // Check if any search variant matches
-                return searchVariants.some(variant => 
-                    title.includes(variant) || description.includes(variant)
-                );
+                // Check if any search variant matches (case-insensitive for English, exact for Hebrew)
+                return searchVariants.some(variant => {
+                    const isHebrew = /[\u0590-\u05FF]/.test(variant);
+                    
+                    if (isHebrew) {
+                        // For Hebrew, check exact matches and substrings
+                        return title.includes(variant) || description.includes(variant);
+                    } else {
+                        // For English, use case-insensitive matching
+                        const lowerTitle = title.toLowerCase();
+                        const lowerDescription = description.toLowerCase();
+                        const lowerVariant = variant.toLowerCase();
+                        return lowerTitle.includes(lowerVariant) || lowerDescription.includes(lowerVariant);
+                    }
+                });
             });
 
             console.log(`🔍 Search "${searchTerm}" with variants:`, searchVariants);
-            console.log(`📊 Found ${filtered.length} matching articles`);
+            console.log(`📊 Found ${filtered.length} matching articles out of ${articles.length} total`);
 
             // Score and sort by relevance
             const scored = filtered.map(article => ({
