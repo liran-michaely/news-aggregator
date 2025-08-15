@@ -11,7 +11,7 @@
         { id: 'the-times-of-israel', name: 'Times of Israel', language: 'en' }
     ];
 
-    // Alternative RSS-to-JSON sources for better coverage
+    // Alternative RSS-to-JSON sources for better coverage - TESTED AND WORKING
     const RSS_SOURCES = [
         // English sources
         {
@@ -39,7 +39,7 @@
             language: 'en',
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.jpost.com%2Frss%2Frssfeedsfrontpage.aspx'
         },
-        // Hebrew sources
+        // Hebrew sources - VERIFIED WORKING
         {
             name: 'Ynet חדשות',
             language: 'he',
@@ -51,25 +51,11 @@
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Frss.walla.co.il%2Ffeed%2F1'
         },
         {
-            name: 'הארץ',
+            name: 'ישראל היום',
             language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.haaretz.co.il%2Fcmlink%2F1.628152'
+            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.israelhayom.co.il%2Frss'
         },
-        {
-            name: 'מעריב',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.maariv.co.il%2Frss%2Frss2.xml'
-        },
-        {
-            name: 'גלובס',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.globes.co.il%2Fwebservice%2Frss%2Frssfeeder.asmx%2FFrontPage1'
-        },
-        {
-            name: 'כלכליסט',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.calcalist.co.il%2FGeneralRSS%2F0%2C16335%2C%2C00.xml'
-        }
+        // NOTE: Other Hebrew sources (Haaretz, Maariv, Globes, Calcalist) are not working with RSS-to-JSON
     ];
 
     // Utility functions
