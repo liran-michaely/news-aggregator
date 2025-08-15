@@ -13,62 +13,25 @@
 
     // Alternative RSS-to-JSON sources for better coverage
     const RSS_SOURCES = [
-        // English sources
         {
             name: 'BBC World',
-            language: 'en',
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.bbci.co.uk%2Fnews%2Fworld%2Frss.xml'
         },
         {
-            name: 'CNN Top Stories',
-            language: 'en', 
+            name: 'CNN Top Stories', 
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Frss.cnn.com%2Frss%2Fedition.rss'
         },
         {
             name: 'Reuters',
-            language: 'en',
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Ffeeds.reuters.com%2Freuters%2FtopNews'
         },
         {
             name: 'Times of Israel',
-            language: 'en',
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.timesofisrael.com%2Ffeed%2F'
         },
         {
             name: 'Jerusalem Post',
-            language: 'en',
             url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.jpost.com%2Frss%2Frssfeedsfrontpage.aspx'
-        },
-        // Hebrew sources
-        {
-            name: 'Ynet חדשות',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.ynet.co.il%2Fintegration%2Fstoryrss2.xml'
-        },
-        {
-            name: 'וואלה! חדשות',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Frss.walla.co.il%2Ffeed%2F1'
-        },
-        {
-            name: 'הארץ',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.haaretz.co.il%2Fcmlink%2F1.628152'
-        },
-        {
-            name: 'מעריב',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.maariv.co.il%2Frss%2Frss2.xml'
-        },
-        {
-            name: 'גלובס',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.globes.co.il%2Fwebservice%2Frss%2Frssfeeder.asmx%2FFrontPage1'
-        },
-        {
-            name: 'כלכליסט',
-            language: 'he',
-            url: 'https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fwww.calcalist.co.il%2FGeneralRSS%2F0%2C16335%2C%2C00.xml'
         }
     ];
 
@@ -122,122 +85,21 @@
     function scoreRelevance(article, searchTerm) {
         if (!searchTerm) return 0;
         
-        const terms = getSearchVariants(searchTerm);
+        const term = searchTerm.toLowerCase();
         const title = (article.title || '').toLowerCase();
         const description = (article.description || '').toLowerCase();
         
         let score = 0;
         
-        // Check all term variants
-        for (const term of terms) {
-            // Title matches are worth more
-            if (title.includes(term)) score += 10;
-            if (description.includes(term)) score += 5;
-        }
+        // Title matches are worth more
+        if (title.includes(term)) score += 10;
+        if (description.includes(term)) score += 5;
         
         // Recent articles get slight boost
         const hoursOld = (Date.now() - new Date(article.publishedAt)) / (1000 * 60 * 60);
         if (hoursOld < 24) score += 2;
         
         return score;
-    }
-
-    // Hebrew search term variants and transliterations
-    function getSearchVariants(searchTerm) {
-        if (!searchTerm) return [];
-        
-        const term = searchTerm.toLowerCase().trim();
-        const variants = new Set([term]);
-        
-        // Hebrew to English transliterations
-        const hebrewToEnglish = {
-            'מעלה אדומים': ['maale adumim', 'ma\'ale adumim', 'maaleh adumim', 'ma\'aleh adumim'],
-            'ירושלים': ['jerusalem', 'yerushalayim'],
-            'תל אביב': ['tel aviv'],
-            'חיפה': ['haifa'],
-            'באר שבע': ['beer sheva', 'beersheba'],
-            'אילת': ['eilat'],
-            'נתניה': ['netanya'],
-            'רמת גן': ['ramat gan'],
-            'פתח תקווה': ['petah tikva', 'petach tikva'],
-            'חולון': ['holon'],
-            'בת ים': ['bat yam'],
-            'רחובות': ['rehovot'],
-            'אשדוד': ['ashdod'],
-            'אשקלון': ['ashkelon'],
-            'הרצליה': ['herzliya'],
-            'כפר סבא': ['kfar saba'],
-            'רעננה': ['raanana'],
-            'גבעתיים': ['givatayim'],
-            'ישראל': ['israel'],
-            'פלסטין': ['palestine'],
-            'עזה': ['gaza'],
-            'רמאללה': ['ramallah'],
-            'חברון': ['hebron'],
-            'נבלוס': ['nablus'],
-            'יהודה ושומרון': ['judea and samaria', 'west bank'],
-            'גדה מערבית': ['west bank'],
-            'גליל': ['galilee'],
-            'נגב': ['negev'],
-            'כנסת': ['knesset'],
-            'צהל': ['idf', 'israel defense forces'],
-            'שב״כ': ['shin bet', 'shabak'],
-            'משטרה': ['police'],
-            'בית משפט': ['court'],
-            'ביטחון': ['security'],
-            'טרור': ['terror', 'terrorism'],
-            'פיגוע': ['attack', 'terror attack'],
-            'התנחלות': ['settlement'],
-            'מתנחל': ['settler'],
-            'פיברומיאלגיה': ['fibromyalgia'],
-            'פיברומילאגיה': ['fibromyalgia']
-        };
-        
-        // English to Hebrew transliterations
-        const englishToHebrew = {
-            'maale adumim': ['מעלה אדומים'],
-            'ma\'ale adumim': ['מעלה אדומים'],
-            'maaleh adumim': ['מעלה אדומים'],
-            'ma\'aleh adumim': ['מעלה אדומים'],
-            'jerusalem': ['ירושלים'],
-            'tel aviv': ['תל אביב'],
-            'haifa': ['חיפה'],
-            'beer sheva': ['באר שבע'],
-            'beersheba': ['באר שבע'],
-            'eilat': ['אילת'],
-            'israel': ['ישראל'],
-            'palestine': ['פלסטין'],
-            'gaza': ['עזה'],
-            'west bank': ['גדה מערבית', 'יהודה ושומרון'],
-            'settlement': ['התנחלות'],
-            'settler': ['מתנחל'],
-            'fibromyalgia': ['פיברומיאלגיה', 'פיברומילאגיה']
-        };
-        
-        // Add Hebrew variants if searching in Hebrew
-        if (hebrewToEnglish[term]) {
-            hebrewToEnglish[term].forEach(variant => variants.add(variant));
-        }
-        
-        // Add English variants if searching in English
-        if (englishToHebrew[term]) {
-            englishToHebrew[term].forEach(variant => variants.add(variant));
-        }
-        
-        // Handle partial matches for compound terms
-        const words = term.split(/\s+/);
-        if (words.length > 1) {
-            words.forEach(word => {
-                if (hebrewToEnglish[word]) {
-                    hebrewToEnglish[word].forEach(variant => variants.add(variant));
-                }
-                if (englishToHebrew[word]) {
-                    englishToHebrew[word].forEach(variant => variants.add(variant));
-                }
-            });
-        }
-        
-        return Array.from(variants);
     }
 
     // API functions
@@ -485,7 +347,7 @@
                 value: value,
                 onChange: (e) => onChange(e.target.value),
                 onKeyPress: (e) => e.key === 'Enter' && onSearch(),
-                placeholder: 'Search news in Hebrew or English (e.g., "מעלה אדומים", "maale adumim", "ישראל", "israel")...',
+                placeholder: 'Search news (e.g., "maale adumim", "israel", "technology")...',
                 style: {
                     flex: '1',
                     minWidth: '300px',
@@ -556,24 +418,17 @@
                 return;
             }
 
-            const searchVariants = getSearchVariants(searchTerm);
+            const term = searchTerm.toLowerCase().trim();
             const filtered = articles.filter(article => {
                 const title = article.title.toLowerCase();
                 const description = article.description.toLowerCase();
-                
-                // Check if any search variant matches
-                return searchVariants.some(variant => 
-                    title.includes(variant) || description.includes(variant)
-                );
+                return title.includes(term) || description.includes(term);
             });
-
-            console.log(`🔍 Search "${searchTerm}" with variants:`, searchVariants);
-            console.log(`📊 Found ${filtered.length} matching articles`);
 
             // Score and sort by relevance
             const scored = filtered.map(article => ({
                 ...article,
-                score: scoreRelevance(article, searchTerm)
+                score: scoreRelevance(article, term)
             })).sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
                 return new Date(b.publishedAt) - new Date(a.publishedAt);
