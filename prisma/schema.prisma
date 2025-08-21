@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id      String   @id @default(cuid())
+  email   String   @unique
+  locale  String?
+  region  String?
+  createdAt DateTime @default(now())
+  prefs   UserPrefs?
+  briefings Briefing[]
+}
+
+model Source {
+  id          String @id @default(cuid())
+  name        String
+  url         String
+  rssUrl      String?
+  country     String?
+  language    String?
+  qualityScore Float @default(0.5)
+  biasTag     String?
+  articles    Article[]
+}
+
+model Article {
+  id           String   @id @default(cuid())
+  source       Source   @relation(fields: [sourceId], references: [id])
+  sourceId     String
+  title        String
+  snippet      String?
+  contentText  String?
+  canonicalUrl String?
+  publishedAt  DateTime
+  indexedAt    DateTime @default(now())
+  language     String?
+  country      String?
+  topics       String[]
+  entities     String[]
+  paywall      Boolean? @default(false)
+  hash         String   @unique
+}
+
+model Briefing {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  name        String
+  queryJson   Json
+  scheduleCron String
+  createdAt   DateTime @default(now())
+}
+
+model UserPrefs {
+  user        User   @relation(fields: [userId], references: [id])
+  userId      String @id
+  weightsJson Json
+  mutedPublishers String[]
+  topics      String[]
+  allowTelemetry Boolean @default(false)
+}
+
+model IngestionLog {
+  id        String   @id @default(cuid())
+  source    Source?  @relation(fields: [sourceId], references: [id])
+  sourceId  String?
+  stage     String
+  status    String
+  message   String?
+  timestamp DateTime @default(now())
+}

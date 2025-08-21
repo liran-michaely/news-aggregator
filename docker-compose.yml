@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  web:
+    build: .
+    command: npm run dev
+    ports:
+      - '3000:3000'
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/pulse
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pulse
+    ports:
+      - '5432:5432'
+  redis:
+    image: redis:7
+    ports:
+      - '6379:6379'
