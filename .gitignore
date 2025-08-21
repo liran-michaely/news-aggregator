@@ -1,0 +1,9 @@
+node_modules
+.env
+.next
+coverage
+*.log
+
+# prisma
+db.sqlite
+
